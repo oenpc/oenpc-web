@@ -1,0 +1,33 @@
+# 统一换行符：仓库内一律以 LF 存储与检出。
+#
+# 本仓库同时存在 Windows 开发环境与 Linux 部署环境（A 机站点 / B 机应用）。
+# 若依赖全局 core.autocrlf，会出现：
+#   · `git add` 刷屏 "LF will be replaced by CRLF" 警告
+#   · 换行符随克隆平台漂移，产生无意义的整文件 diff
+# 用属性文件显式固定，比要求每个人手动配置 autocrlf 更可靠。
+* text=auto eol=lf
+
+# 二进制文件不做换行符转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.db binary
+*.db-wal binary
+*.db-shm binary
+
+# lockfile 由工具生成，不参与 diff 统计噪音
+pnpm-lock.yaml -diff
+
+# 文档里的 Markdown 与源码同等对待（不额外转换）
+*.md text eol=lf

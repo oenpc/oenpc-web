@@ -1,0 +1,32 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist-ssr/
+release/
+.pnpm-store/
+.vite/
+.output/
+.nuxt/
+
+# 运行期数据（数据库、媒体文件、日志）—— 绝不入库
+data/
+*.db
+*.db-wal
+*.db-shm
+*.log
+uploads/
+
+# 临时验证产物：只放 .tmp-verify/，且不要把里面写好的脚本提交
+.tmp-verify/
+*.tmp
+
+# 环境与凭据
+.env
+.env.*
+!.env.example
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

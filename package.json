@@ -1,0 +1,18 @@
+{
+  "name": "oenpc-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "通用型企业外贸展示网站 —— 前台 SSG + 后台 SPA + Fastify 应用服务；开发规范遵循 STRATA",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "packageManager": "pnpm@11.24.0",
+  "scripts": {
+    "strata:selftest": "node strata/checks/selftest.mjs",
+    "strata:check": "node strata/checks/run-all.mjs",
+    "strata:measure": "node strata/measure-repo.mjs --root . --layers routes,core,services,repositories,views,components,stores,locales,scripts,checks --domains common,auth,products,content,channels,inquiry,media,site,reports,audit,ui",
+    "strata:measure:index": "node strata/measure-index.mjs"
+  }
+}

@@ -96,9 +96,9 @@ apps/server/src/routes/products/list.ts[R·PD·7·SEC·M]: F:产品列表接口 
 `strata/checks/index-integrity.mjs` 按这两种形态判定覆盖率，
 并在有文件无条目时**失败**（而不是默默放过）。
 
-### 0.2 `A` 维 —— 架构层（**10 个，封闭**）
+### 0.2 `A` 维 —— 架构层（**11 个，封闭**）
 
-> **上限必须有限**：面数上界 = `|A| × |B|` = 10 × 12 = **120**。
+> **上限必须有限**：面数上界 = `|A| × |B|` = 11 × 12 = **132**。
 > 无限枚举的层等于没有面。
 > **怎么切的**：按"改动它会不会波及别处"切，**不按框架名切**。
 
@@ -112,13 +112,25 @@ apps/server/src/routes/products/list.ts[R·PD·7·SEC·M]: F:产品列表接口 
 | `V` | View | 页面（前台 + 后台）| `apps/web/src/views/**`、`apps/admin/src/views/**` |
 | `O` | Component | 可复用组件 | `apps/*/src/components/**` |
 | `X` | Client | 前端状态与 API 客户端 | `apps/*/src/stores/**`、`api/**` |
-| `N` | Locale | 多语言资源包 | `apps/*/src/locales/**`、`packages/shared/src/i18n/**` |
+| `N` | Locale | 多语言资源包（各 app 自己的语种资源）| `apps/*/src/locales/**` |
+| `K` | Contract | 前后端共享的**类型契约**（纯类型，无运行时）| `packages/shared/src/**` |
 | `T` | Tool | 构建、脚本、检查器、文档与仓库根文件 | `scripts/**`、`strata/**`、`docs/**`、`AGENTS.md`、`package.json` |
 
-**为什么是这 10 个**：`R → C → D` 是单向依赖，改 `C` 通常不波及 `D`，反之亦然。
+**为什么是这 11 个**：`R → C → D` 是单向依赖，改 `C` 通常不波及 `D`，反之亦然。
 `V / O / X / N` 是前端四类**波及面不同**的单元：改一个 `O` 会波及所有引用它的 `V`；
 改 `N` 会波及**所有**层的所有文件（这正是它必须独立成层的原因 ——
 i18n 资源是全局波及面，混进 `V` 会让"改文案"看起来像"改页面"）。
+`K`（契约）**同时被前后端 import**，改动跨两端传播 —— 这是与其余各层都不同的波及形态。
+
+> **`K` 是骨架落地时补上的**（原字典 10 层，无 K）。原因：`packages/shared` **放不进任何一层** ——
+> 它不是 Tool，也不属于任一 app；若硬塞进 `T`（我曾这么写过占位），
+> 一次 `error-codes.ts` 的改动就会与 `strata/measure.mjs` 落在同一个面上，
+> 锚在 `T·SC` 上的约束会同时管住两者 —— 语义上说不通。
+> 按本节的提升规则（某类文件 ≥3 个才提升为层，而它一次就有 5 个文件），它够格独立成层。
+>
+> **这是字典应当被代码检验的地方**：字典先定稿是对的，但**定稿不等于不可修订** ——
+> 修订要走本节的正规顺序（先改 §0，再改条目），`strata/lib/dictionary.mjs` 与
+> `strata/measure-index.mjs` 里的 `|L|` 与面数上界要同步改。
 
 > **提升路径（不要提前建层）**：SSG 预渲染脚本（`F6.4`）若成长到 **≥3 个文件**，
 > 再提升为独立层 `G`（Generator）。现在它归 `T`。
@@ -314,7 +326,7 @@ strata/checks/[T·SC·8··M]: F:判决层（V）—— 三值检查器集合 |
 strata/lib/dictionary.mjs[T·SC·8··S]: F:字典的机读投影（R 维）|
   R:docs/strata-index.md,strata/lib/parse-index.mjs | A:LAYERS,DOMAINS,FEATURES,ENTRY_RE |
   S:★ 权威是索引 §0，本文件只是投影：加层/域/特征要**先改 §0 再改这里**；
-    |L|=10、|B|=12 ⇒ 面数上界 120；
+    |L|=11、|B|=12 ⇒ 面数上界 132；
     ENTRY_RE 用 `·` 分隔而不是拼成 [CCPL9] —— 早期自由串标签的层/域边界
     在特定组合下不可区分（reference.md §4.1 的实测教训）
 
@@ -349,26 +361,157 @@ strata/measure-index.mjs[T·SC·7··S]: F:从索引条目算**权威 κ** |
     它证明的是"字典还没被检验"，与目录代理的高 κ 是同一类假信号
 ```
 
-### 2.2 产品代码（**待建 —— 骨架落地后立刻补，并与骨架同一次提交**）
-
-> 按 STRATA「字典先于条目」，§0 字典先定稿；条目等骨架落地再写。
-> **必须与骨架放在同一次提交里** —— 否则索引是"事后补的"，
-> 面可能已经退化成点（且 γ 需要 git 历史才能算）。
+### 2.2 契约层 `packages/shared`（`K` 维 —— ✅ 已落地）
 
 ```
-apps/server/src/index.ts           [E·CO·9·SEC·S]   服务端进程入口
-apps/server/src/app.ts             [E·CO·9·SEC·M]   Fastify 装配
-apps/server/src/routes/<域>/        [R·<域>·7·SEC·M]  路由（建议目录条目）
-apps/server/src/core/              [C·<域>·…]
-apps/server/src/services/          [S·<域>·…]
-apps/server/src/repositories/<域>/  [D·<域>·7·SQL,PG·M]
-apps/server/src/db/                [D·CO·9·SQL,UTC,PG·M]  连接、PRAGMA、迁移
-packages/shared/src/               [T·SC·8··M]        契约（纯类型，无运行时）
-apps/web/src/views/<域>/           [V·<域>·…]
-apps/admin/src/views/<域>/         [V·<域>·…]
-apps/*/src/components/             [O·<域>·…]
-apps/*/src/stores/,api/            [X·<域>·…]
-apps/*/src/locales/                [N·<域>·…·I18N]
+packages/shared/src/index.ts[K·CO·8··S]: F:契约包出口（barrel）|
+  R:error-codes.ts,envelope.ts,locales.ts,permissions.ts,contract/* | A:全部公开类型与枚举 |
+  S:导入路径带 `.js` 后缀是刻意的：server 用 NodeNext 要求显式扩展名，
+    前端 Bundler 也接受 —— 两边同一份源码都能解析
+
+packages/shared/src/error-codes.ts[K·CO·8··S]: F:错误码封闭枚举 |
+  R:envelope.ts,apps/server/src/core/errors.ts | A:ERROR_CODES,ErrorCode |
+  S:只放码。HTTP 状态映射是运行时逻辑 → 归 apps/server/src/core/errors.ts；
+    后端一旦返回成品文案，切英文后错误提示就仍是中文
+
+packages/shared/src/envelope.ts[K·CO·8··S]: F:响应信封（可辨识联合）|
+  R:error-codes.ts | A:ApiOk,ApiErr,ApiResponse,Page,PageQuery |
+  S:★ 用联合而非 {code,data,message}：让 TS **强制**调用方先判 ok 再取 data，
+    否则会出现"成功提示里显示 undefined"；信封内禁止放文案，只有 code + 机器可读 meta
+
+packages/shared/src/locales.ts[K·ST·8·I18N·S]: F:语种封闭枚举（≥3）|
+  R:contract/products.ts | A:SUPPORTED_LOCALES,LocaleCode,LocalizedText,PUBLIC/ADMIN_DEFAULT_LOCALE |
+  S:★ 这条决定**建表方式**：≥3 语种 ⇒ 必须用翻译表，不能 name_zh/name_en 两列
+    （事后改要迁移全部既有数据，成本不可逆）；
+    公开站默认 en、后台默认 zh 是**两个不同的默认值** —— 受众不同，混成一个两边各错一半
+
+packages/shared/src/permissions.ts[K·AU·7·SEC·S]: F:权限点与角色 |
+  R:locales.ts | A:PERMISSIONS,Permission,Role,isPermission |
+  S:权限点用联合类型而非 string：拼错的权限点运行时表现为"某功能突然 403"，
+    极易被误判成"前端没登录"；Role.isOwner 是**隐式全权**、不展开成权限列表 ——
+    否则新增权限点时会漏补超管，症状是"超管突然失去新功能"
+
+packages/shared/src/contract/channels.ts[K·CH·7··S]: F:购买渠道契约 |
+  R:locales.ts | A:PURCHASE_PLATFORMS,PurchaseChannelLink,isPurchasePlatform |
+  S:平台必须封闭枚举：自由文本会让「阿里国际站 / Alibaba / 阿里巴巴」变成三个平台 →
+    前台图标缺失 + 出站点击统计碎成几十个键；
+    服务端只校验 http(s) 与长度，**不猜**各平台的 URL 规则（形态各异，猜必错）
+
+packages/shared/src/contract/products.ts[K·PD·8·I18N·S]: F:产品契约（全站核心数据外形）|
+  R:channels.ts,locales.ts | A:Product,ProductListItem,ProductCategory,ProductSpec,ProductQuery |
+  S:三个取舍：① 文本一律 LocalizedText，不按语种加列；② **slug 也分语种** ——
+    否则两种语言共用一个 URL，等于只有一种能被索引；
+    ③ 时间是 ISO8601 UTC 字符串而非 Date（Date 经 JSON 序列化会带上本地时区，
+    跨机传递后时区信息丢失）；ProductListItem 故意不复用 Product ——
+    列表不需要 description/specs，而它们常是全表最大的两列
+```
+
+### 2.3 应用服务 `apps/server`（✅ 已落地 —— 一个完整垂直切片）
+
+```
+apps/server/src/index.ts[E·CO·9·SEC,UTC·S]: F:进程入口（配置→连库→迁移→装配→监听）|
+  R:app.ts,config.ts,db/connection.ts,db/migrations.ts | A:- |
+  S:★ 迁移必须在 listen **之前**：先监听会让启动瞬间的请求打到半套表结构上，
+    表现为随机 500，而"正在迁移"这个因果关系在日志里几乎看不出来；
+    SIGTERM 必须处理（systemd 的默认停止信号），否则可能留下 -wal 与 502；
+    启动失败必须**非零退出** —— 退出码 0 会被 systemd 当成正常结束而**不重启**
+
+apps/server/src/app.ts[E·CO·9·SEC·S]: F:Fastify 装配与错误出口 |
+  R:core/errors.ts,routes/health.ts,routes/products/index.ts | A:buildApp,AppDeps |
+  S:★ trustProxy 从配置读、**默认关闭**，两个方向配错都出事：不配 → 所有访客都是 A 机 IP，
+    按 IP 限流变成"限流全站"（一次爆破封掉所有人）；配 true → 客户端可伪造
+    X-Forwarded-For 绕过限流；错误处理器是**唯一出口** ——
+    未知异常只给 INTERNAL，原始 message 可能含 SQL/路径，不透传
+
+apps/server/src/config.ts[E·CO·8·SEC·S]: F:环境变量解析（全仓库唯一读 process.env 处）|
+  R:.env.example,app.ts,index.ts | A:loadConfig,ServerConfig |
+  S:★ 相对路径按 **cwd** 解析 —— 从仓库根与从 apps/server 启动会写到两个不同的库，
+    测试要隔离必须传绝对路径；端口/日志级别非法**直接抛错不回落**
+    （静默回落会监听到意料之外的端口）；生产强制要求 SITE_URL，
+    否则 sitemap 与 hreflang 会生成指向错误域名的绝对地址**且不报错**
+
+apps/server/src/core/errors.ts[C·CO·8·SEC·S]: F:AppError 与 HTTP 状态映射 |
+  R:app.ts | A:AppError,statusOf,toAppError |
+  S:★ C 层不碰 Fastify（因此可单测），reply 转换归 app.ts；
+    未知异常一律降级 INTERNAL 且不透传 message（原始信息可能含 SQL/路径 → 信息泄露）；
+    message 设成 code，是为了防止有人顺手把中文文案写进去再透传给前端
+
+apps/server/src/db/dialect.ts[D·CO·9·SQL,PG,SEC·S]: F:SQL 方言适配层（唯一允许 SQLite 专有语法处）|
+  R:db/connection.ts,repositories/products/repository.ts | A:applyConnectionPragmas,nowIsoUtc,to/fromJsonColumn |
+  S:★ 靠 strata-allow-dialect 豁免 portable-sql：PRAGMA 三条（WAL / 外键 / busy_timeout）；
+    upsert 用 ON CONFLICT 而**不是** INSERT OR REPLACE —— 后者是 SQLite 专有且**语义不同**
+    （OR REPLACE 先删冲突行再插入，会触发外键级联，是隐蔽的数据丢失源）；
+    占位符 ? vs $n、LIKE vs ILIKE 是**检查器检测不到的**方言差异，只能靠评审
+
+apps/server/src/db/connection.ts[D·CO·7·SQL·S]: F:数据库连接 |
+  R:db/dialect.ts,config.ts | A:openDatabase,OpenedDatabase |
+  S:用 node:sqlite（DatabaseSync）零第三方依赖，这也是 engines 锁 >=22.19.0 的原因；
+    自动建目录但**不预置任何业务数据**（首次建库归迁移）；
+    SQLite 单写事务 —— 多进程共库会 SQLITE_BUSY，真要水平扩展必须换 PG
+
+apps/server/src/db/migrations.ts[D·CO·9·SQL,PG·M]: F:手写迁移（版本有序、可重复执行）|
+  R:db/dialect.ts,db/connection.ts | A:MIGRATIONS,migrate |
+  S:★ 主键用 TEXT(UUID) 不用 AUTOINCREMENT：后者是 SQLite 专有 + 泄漏业务量
+    （URL 里 /products/17 可被枚举）+ 导入导出时整数 id 会冲突；
+    ★ 多语走**翻译表**而非 name_zh/name_en —— 这是 F5.4 在建表层面的落地，代价是取名称要 JOIN；
+    进翻译表 vs 进 JSON 列的判据是**是否需要被检索**（name/slug 要 → 翻译表 + 索引；
+    specs 只随产品整体读 → JSON 列即可，避免为它建键值表而带来 N 倍行数）；
+    每条迁移单独事务，失败即回滚该条，不留半套表结构
+
+apps/server/src/repositories/products/mapper.ts[D·PD·8·SQL·M]: F:行 → DTO 映射 |
+  R:repositories/products/repository.ts,db/dialect.ts | A:toProduct,toProductListItem,各 Row 类型 |
+  S:★ 吸收三处阻抗失配：① SQLite 的 INTEGER 0/1 → boolean（PG 有真 boolean；
+    前端拿到 0/1 会出"已下架却没被隐藏"）；② 多行翻译 → LocalizedText，**不做静默回落**
+    （静默回落会让漏传语种表现为"显示了另一种语言"而不是报错，陷阱 P-11）；
+    ③ JSON 列解析失败返回 fallback 而不抛错；渠道的**枚举外平台被丢弃**，
+    而不是原样透传渲染出一个空按钮
+
+apps/server/src/repositories/products/repository.ts[D·PD·9·SQL,PG,PERF·M]: F:产品仓储（SQL 只在此层与 db/）|
+  R:mapper.ts,services/products/service.ts | A:listProducts,getProductById,listPublishedSlugs |
+  S:★ 列表取**全部语种**的翻译而不只是请求语种 —— hreflang 需要每个语种的 slug，
+    只取请求语种则构建期生成不出互指链接，而互指错了搜索引擎会判重复内容；
+    ★ 多次查询而非一次多表 JOIN：JOIN N图×M渠道×K规格会行倍增，产品一多列表耗时随图数增长；
+    ★ LIKE 的 % / _ / \ 必须转义，否则访客搜一个 % 就等于匹配全表；
+    node:sqlite 的 double-cast 收口在 queryAll / queryOne 两个函数里
+
+apps/server/src/services/products/service.ts[S·PD·8·SEC·S]: F:产品应用服务（编排 + 访问策略）|
+  R:core/errors.ts,repositories/products/repository.ts | A:requireLocale,listPublicProducts,getPublicProduct |
+  S:★ 公开与后台**走不同入口**：listPublicProducts 强制 publishedOnly=true ——
+    策略由服务端定、不由入参定，否则前端加个 ?publishedOnly=false 未上架产品就露出去；
+    ★ 未上架详情返回 **404 而非 403**：403 等于确认"id 存在但你看不到"，
+    把未发布清单泄漏了出去；语种非法 → BAD_REQUEST，不静默回落
+
+apps/server/src/routes/health.ts[R·CO·7··S]: F:健康检查 |
+  R:app.ts,db/dialect.ts | A:registerHealthRoutes,HealthPayload |
+  S:★ 必须回报**依赖的真实状态**（库路径 + 已应用迁移数），不能恒定 {"status":"ok"}：
+    否则"目录写不进去""迁移没跑完"会被反代与 systemd 当成健康，请求转进来后才逐个失败 ——
+    那时错误分散在业务接口上，排查方向完全不同；不回报任何凭据或完整环境变量
+
+apps/server/src/routes/products/handlers.ts[R·PD·7·SEC·S]: F:产品路由处理函数 |
+  R:services/products/service.ts,core/errors.ts | A:createProductHandlers |
+  S:R 层只做三件事：校验入参格式、调服务、套信封 —— 不放业务规则，也不放 SQL；
+    入参非法**直接 400**，不做 Math.max 之类静默纠正（静默纠正会让调用方以为分页生效了）；
+    不写 try/catch，否则每个处理函数都要重复一遍错误映射（统一在 app.ts 的错误处理器）
+
+apps/server/src/routes/products/index.ts[R·PD·7··S]: F:产品路由注册 |
+  R:routes/products/handlers.ts | A:registerProductRoutes |
+  S:★ API 路径**不带语种**，语种走 querystring：页面 URL 的语种前缀是给搜索引擎分语种收录的，
+    而 API 的 locale 是内容协商 —— 把语种塞进 API 路径只会让缓存键按语种翻倍，
+    接口本身并不因语种而不同；Fastify 的 radix 树能区分 /products 与 /products/:id，
+    **不存在** nginx 那种前缀 location 吃掉真实路由的问题（P-07 是 nginx 侧的陷阱）
+```
+
+### 2.4 待建（骨架未覆盖的部分）
+
+> 这些面目前还没有条目 —— **新文件落在已有面上时不需要新约束**（锚定的收益），
+> 只有出现**新的面**时才需要新增规则。
+
+```
+apps/web/src/**        [V/O/X/N·PD,CT,ST,UI·…]  前台 SSG 站点（尚未创建）
+apps/admin/src/**      [V/O/X/N·AU,PD,CT,IQ,…·…] 后台 SPA（尚未创建）
+apps/server/src/routes/<其他域>        [R·<域>·…]
+apps/server/src/repositories/<其他域>   [D·<域>·…]
+apps/server/src/db/（媒体 / 询盘 / 审计表）  [D·<域>·…]
 ```
 
 > **条目粒度不是"每个文件一条"**（`reference.md` §4.4）：
@@ -425,6 +568,7 @@ V/O/X/R/S/D ──► packages/shared   （契约，全层可读）
 | P-12 | **SQLite 无原生 datetime 类型** | 时间存成不同格式的字符串 → 排序与区间查询结果错乱 | 统一 ISO8601 UTC 字符串格式，由一处工具函数产出 | 检查时间格式化调用点 | [结构] |
 | P-13 | **`node:sqlite` 并发写锁** | 多进程/多连接同时写 → `SQLITE_BUSY` | 单进程写入；开 WAL；写事务短小 | 检查 PRAGMA 设置 | [结构] |
 | P-14 | **图片删除后前台 404** | 媒体库删了仍被产品引用的图片 | 引用计数 + 删除保护 | 删除前检查引用 | [结构] |
+| P-15 | **面对称性：两个 app 的入口落在同一个面上** | 前后端各有入口（`apps/server/src/index.ts` 与 `apps/web/src/main.ts`），**两者坐标都是 `⟨E,CO⟩`** —— 面无法区分"服务端入口"与"站点入口"，于是锚在 `⟨E,CO⟩` 的约束会同时命中两侧 | 只适用于一侧的约束，锚在**关注点真正所在的层**（如 API 客户端层 `X`），**不要锚在入口层 `E`**；确需覆盖 `E` 时必须确认该规则在两侧都成立 | 人工评审（不可判定 → exit 2）| [实测] 骨架落地时发现 |
 
 ---
 
@@ -455,38 +599,44 @@ V/O/X/R/S/D ──► packages/shared   （契约，全层可读）
 ## 6. 本实例的自测指标
 
 > **STRATA 的收益是假设，不是已验证的事实。本节的数字就是本项目对它的检验。**
-> 测量时间：**规范层落地时（尚无产品代码）**。
+> 测量时间：**骨架落地后**（契约层 + 服务端一个垂直切片，共 20 个源码文件；前台/后台尚未创建）。
 
 | 指标 | 定义 | 本实例值 | 判据 |
 |---|---|---|---|
-| 条目数 `\|F\|` | 索引覆盖的 code unit 数 | **11**（全部是规范层自身）| — |
-| 面数 `\|faces\|` | 实测用到的 `⟨层,域⟩` 组合数 | **1**（`T·SC`）| 上界 120 |
-| **`κ`** | 共享面（≥2 条目）覆盖的条目比例 | **1.000 —— 退化值，不具区分力** | **< 0.3 则本项目不适用** |
-| `γ` | 新增文件里"需要新增约束"的比例 | **尚不可测**（需要 git 历史）| 面制应显著低于逐点制 |
+| 条目数 `\|F\|` | 索引覆盖的 code unit 数 | **31** | — |
+| 面数 `\|faces\|` | 实测用到的 `⟨层,域⟩` 组合数 | **13** | 上界 132 |
+| **`κ`** | 共享面（≥2 条目）覆盖的条目比例 | **0.774**（6 个共享面 / 7 个单件面）| **< 0.3 则本项目不适用** |
+| `γ` | 新增文件里"需要新增约束"的比例 | **尚不具区分力** —— 见 §6.2 | 面制应显著低于逐点制 |
 
-### 6.1 ⚠️ 当前这个 κ **不能**用来支持「面锚定有效」
+### 6.1 κ 现在**有区分力**了，但它测的是"面密"，不是"方法有效"
 
-11 条条目**全部落在同一个面** `T·SC`（规范层自身）上。
-单个面装下全部条目时，**κ 必然等于 1.0** —— 它证明的是"字典还没被产品代码检验"，
-而**不是**"面锚定有效"。**这与目录代理给出 0.94–0.99 属于同一类假信号。**
+`κ = 0.774` 来自 13 个面，不再是单面退化值，所以可以下这个结论：
+**在本字典与目录布局下，面确实起到了压缩作用** —— 77.4% 的条目与至少一个其他条目同面。
+作为参照，STRATA 的起源案例是 **0.68**。
 
-`strata/measure-index.mjs` 因此内置了**退化守卫**：面数 ≤ 2 时拒绝输出「适用」的结论。
+**但这不是"面锚定有效"的证据。** κ 只说明"面是有效的压缩"，
+不说明"约束因此更容易被遵守"。后者要靠 STRATA 尚未完成的实验（E1–E4）回答。
+本节的结论边界因此是：**测量可信，收益待检验。**
 
-**要得到有意义的值，必须先有产品代码并带上各自的坐标。**
-在此之前，本节的结论是：**未知** —— 不是"适用"，也不是"通过"。
+> **与骨架前的对比值得记下来**：当时 `κ = 1.000`，但 `|faces| = 1` —— 那是**退化值**
+> （单个面装下全部条目，κ 必然为 1），`strata/measure-index.mjs` 的退化守卫会拒绝
+> 给出"适用"的结论。产品代码落地后这个问题自动消失。
+> **这正说明骨架期的 κ 不能用来下任何结论** —— 一个"漂亮"的 κ 可以是纯粹的假信号。
 
-### 6.2 `γ` 的前置条件（两条都要满足）
+### 6.2 `γ` 目前仍不具区分力
 
-`γ` 度量的是"新增文件里带来一个新面的比例"，所以：
+`γ` 度量"新增文件里带来一个新面的比例"。上一次实测（目录代理口径）得到 `γ = 0.231`
+（13 个新增文件 → 3 个新面），但**这个数现在没有意义**：
 
-1. **需要 git 历史** —— 本仓库**目前还不是 git 仓库**，`γ` 无法计算。
-2. **需要跨越多次提交** —— 即使现在 `git init`，初始提交会一次性加入全部文件，
-   算出的 `γ = 1 个新面 / 10 个文件 = 0.1` **度量的是"第一次提交"，不是方法本身**。
-   `γ` 只有在**后续持续新增文件**时才变得有意义。
+1. 它是**单次提交**的产物 —— 初始提交一次性加入全部文件，
+   度量的是"第一次提交"，不是方法的长期行为。
+2. `γ` 只在**后续持续新增文件**时才说明问题：γ 低 = 新文件大多落在已有面上 = 锚定有收益。
 
-**这正是 STRATA 要求「索引与骨架必须在同一次提交里引入」的原因** ——
-否则索引是事后补的，面可能已经退化成点，而 `γ` 再也测不准
-（起源案例正是因为 git 历史被压缩而无法支撑测量）。
+要得到有意义的 `γ`，需要**积累若干次真实的功能提交之后**再测。
+
+> **这正是 STRATA 要求「索引与骨架必须在同一次提交里引入」的原因** ——
+> 否则索引是事后补的，面可能已经退化成点，而 `γ` 再也测不准
+> （起源案例正是因为 git 历史被压缩而无法支撑测量）。
 
 ### 6.3 测法与命令
 

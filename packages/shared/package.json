@@ -1,0 +1,24 @@
+{
+  "name": "@oenpc-web/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "前后端共享契约：类型与封闭枚举常量（不含运行时逻辑）",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

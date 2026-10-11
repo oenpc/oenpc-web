@@ -6,11 +6,11 @@
  *    两者是否一致由 `strata/checks/index-integrity.mjs` 校验（防漂移）。
  *
  * 面（face）= ⟨架构层, 业务域⟩，是有限集合 L × B 的元素。
- * 本字典：|L| = 10，|B| = 12，面数上界 = **120**。
+ * 本字典：|L| = 11，|B| = 12，面数上界 = **132**。
  * 「有限」这一点是 STRATA 成本定理的前提：约束只能挂在有限个地方。
  */
 
-/** A 维 —— 架构层（10 个，封闭）。按「改动它会不会波及别处」切，不按框架名切。 */
+/** A 维 —— 架构层（11 个，封闭）。按「改动它会不会波及别处」切，不按框架名切。 */
 export const LAYERS = new Map([
   ['E', 'Entry'],
   ['R', 'Route'],
@@ -21,6 +21,7 @@ export const LAYERS = new Map([
   ['O', 'Component'],
   ['X', 'Client'],
   ['N', 'Locale'],
+  ['K', 'Contract'],
   ['T', 'Tool'],
 ])
 

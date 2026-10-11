@@ -37,6 +37,12 @@ export const constraints = [
     scope: { layers: ['E', 'X'], domains: ['CO', 'ST'] },
     why: 'API 基址若在构建期写死，同一份产物无法在测试/生产复用；改地址必须重新构建。',
     symptom: '换环境要重新构建；前端指向错误的后端。',
+    /*
+     * ⚠ 已知的面锚定局限（索引 §4 陷阱 P-15）：服务端入口与站点入口**同为 ⟨E,CO⟩**，
+     *   面区分不了它们，所以本约束也会扫到 apps/server/src/*（那是无害的：
+     *   两条规则在服务端同样成立）。但**只适用于客户端的规则不能锚在 E 层** ——
+     *   那种情况应锚到 X（API 客户端层）。
+     */
     check: 'checks/no-hardcoded-api-base.mjs',
   },
   {

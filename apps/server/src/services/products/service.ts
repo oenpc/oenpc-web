@@ -20,13 +20,18 @@
  * 请求语种非法 → `BAD_REQUEST`，而不是"悄悄用默认语种"。
  * 静默回落的症状是"前台显示了另一种语言"，而排查会一路查到缓存层 ——
  * 真正的错因（URL 里语种拼错）反而看不见（陷阱 P-11）。
+ *
+ * ## 依赖的是**端口**，不是驱动
+ *
+ * 本文件的入参是 `ProductRepository`（`repositories/products/port.ts`），
+ * 不是 `DatabaseSync`。所以换 PostgreSQL 时这个文件**不需要改** ——
+ * 这正是「预留 PG」在结构上的落地。
  */
 
-import type { DatabaseSync } from 'node:sqlite'
 import type { LocaleCode, Page, Product, ProductListItem, ProductQuery } from '@oenpc-web/shared'
 import { isSupportedLocale, PUBLIC_DEFAULT_LOCALE } from '@oenpc-web/shared'
 import { AppError } from '../../core/errors.js'
-import { getProductById, listProducts, listPublishedSlugs } from '../../repositories/products/repository.js'
+import type { ProductRepository } from '../../repositories/products/port.js'
 
 /** 校验并归一化语种入参。非法值**报错**，不回落。 */
 export function requireLocale(raw: string | undefined): LocaleCode {
@@ -51,7 +56,7 @@ export interface PublicProductQuery {
  * 无论入参如何，`publishedOnly` 恒为 true —— 见文件头的说明。
  */
 export function listPublicProducts(
-  db: DatabaseSync,
+  products: ProductRepository,
   input: PublicProductQuery,
 ): Page<ProductListItem> {
   const query: ProductQuery = {
@@ -62,7 +67,7 @@ export function listPublicProducts(
     ...(input.page !== undefined ? { page: input.page } : {}),
     ...(input.pageSize !== undefined ? { pageSize: input.pageSize } : {}),
   }
-  return listProducts(db, query)
+  return products.list(query)
 }
 
 /**
@@ -71,8 +76,8 @@ export function listPublicProducts(
  * 未上架的产品对公开站点返回 **404 而不是 403** ——
  * 403 等于确认"这个 id 存在但你看不到"，把未发布的产品清单泄漏了出去。
  */
-export function getPublicProduct(db: DatabaseSync, id: string): Product {
-  const product = getProductById(db, id)
+export function getPublicProduct(products: ProductRepository, id: string): Product {
+  const product = products.getById(id)
   if (!product || !product.published) throw new AppError('NOT_FOUND', { resource: 'product' })
   return product
 }
@@ -83,6 +88,9 @@ export function getPublicProduct(db: DatabaseSync, id: string): Product {
  * 前台是 SSG，构建期需要枚举出所有产品的 URL；同时 hreflang 互指需要
  * **每个语种**的 slug —— 所以调用方要对每个受支持语种各调一次。
  */
-export function listProductSlugs(db: DatabaseSync, locale: LocaleCode): Array<{ id: string; slug: string }> {
-  return listPublishedSlugs(db, locale)
+export function listProductSlugs(
+  products: ProductRepository,
+  locale: LocaleCode,
+): Array<{ id: string; slug: string }> {
+  return products.listPublishedSlugs(locale)
 }

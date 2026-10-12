@@ -15,10 +15,13 @@
  */
 
 import type { FastifyInstance } from 'fastify'
-import type { DatabaseSync } from 'node:sqlite'
+import type { ProductRepository } from '../../repositories/products/port.js'
 import { createProductHandlers } from './handlers.js'
 
-export function registerProductRoutes(app: FastifyInstance, deps: { db: DatabaseSync }): void {
+export function registerProductRoutes(
+  app: FastifyInstance,
+  deps: { products: ProductRepository },
+): void {
   const handlers = createProductHandlers(deps)
 
   /*

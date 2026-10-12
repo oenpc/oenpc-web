@@ -18,13 +18,13 @@
  */
 
 import type { FastifyRequest } from 'fastify'
-import type { DatabaseSync } from 'node:sqlite'
 import type { ApiResponse, Page, Product, ProductListItem } from '@oenpc-web/shared'
 import { AppError } from '../../core/errors.js'
+import type { ProductRepository } from '../../repositories/products/port.js'
 import { getPublicProduct, listPublicProducts } from '../../services/products/service.js'
 
 export interface ProductRouteDeps {
-  db: DatabaseSync
+  products: ProductRepository
 }
 
 export interface ProductListQuerystring {
@@ -66,7 +66,7 @@ export function createProductHandlers(deps: ProductRouteDeps): ProductHandlers {
     async list(request) {
       const { locale, categoryId, keyword, page, pageSize } = request.query
 
-      const result = listPublicProducts(deps.db, {
+      const result = listPublicProducts(deps.products, {
         locale,
         categoryId,
         keyword,
@@ -83,7 +83,7 @@ export function createProductHandlers(deps: ProductRouteDeps): ProductHandlers {
        * 由 app.ts 的错误处理器统一转成信封（并记录日志）。
        * 这里不做 try/catch —— 那会让每个处理函数都重复一遍错误映射。
        */
-      return { ok: true, data: getPublicProduct(deps.db, request.params.id) }
+      return { ok: true, data: getPublicProduct(deps.products, request.params.id) }
     },
   }
 }

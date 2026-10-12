@@ -24,16 +24,25 @@
  */
 
 import Fastify, { type FastifyInstance } from 'fastify'
-import type { DatabaseSync } from 'node:sqlite'
 import type { ApiErr } from '@oenpc-web/shared'
 import type { ServerConfig } from './config.js'
 import { toAppError } from './core/errors.js'
+import type { ProductRepository } from './repositories/products/port.js'
 import { registerHealthRoutes } from './routes/health.js'
 import { registerProductRoutes } from './routes/products/index.js'
 
 export interface AppDeps {
-  db: DatabaseSync
   config: ServerConfig
+  /**
+   * 各域的仓储**端口**，不是数据库连接。
+   *
+   * 这是 P0.1 抽仓储接口的直接收益：`app.ts` 不再认识 `DatabaseSync`，
+   * 换驱动时改的是 `index.ts` 的装配（一行），不是这里。
+   * 以后每加一个域，往这个对象里加一个字段即可。
+   */
+  repositories: {
+    products: ProductRepository
+  }
   /** 数据库实际绝对路径，健康检查会回报它。 */
   databasePath: string
   appliedMigrations: number
@@ -82,7 +91,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     startedAtMs: deps.startedAtMs,
   })
 
-  registerProductRoutes(app, { db: deps.db })
+  registerProductRoutes(app, { products: deps.repositories.products })
 
   return app
 }

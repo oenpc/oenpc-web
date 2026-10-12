@@ -82,8 +82,14 @@ export const INDEX_PATH = 'docs/strata-index.md'
 /** 参与「索引完整性」统计的源码扩展名。 */
 export const SOURCE_EXTS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs', '.vue']
 
-/** 参与统计的源码根目录。 */
-export const SOURCE_ROOTS = ['apps', 'packages', 'scripts', 'strata']
+/**
+ * 参与统计的源码根目录。
+ *
+ * `tests` 也必须在这里 —— 否则测试文件是**索引完整性的盲区**：
+ * 它们不进统计，也就永远不需要条目，而"索引过期比没有索引更危险"。
+ * 用一条目录条目覆盖整个 `tests/` 即可（见索引 §2.5）。
+ */
+export const SOURCE_ROOTS = ['apps', 'packages', 'scripts', 'strata', 'tests']
 
 /** 永不进入统计的目录（构建产物与依赖）。 */
 export const SKIP_DIRS = new Set([

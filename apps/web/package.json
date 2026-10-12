@@ -1,0 +1,26 @@
+{
+  "name": "@oenpc-web/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "前台展示站点（SSG：构建期预渲染）",
+  "scripts": {
+    "dev": "vite",
+    "build:client": "vite build --outDir dist/client --emptyOutDir",
+    "build:server": "vite build --ssr src/entry-server.ts --outDir dist/server",
+    "prerender": "node scripts/prerender.mjs",
+    "build": "pnpm build:client && pnpm build:server && pnpm prerender",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@oenpc-web/shared": "workspace:*",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/server-renderer": "^3.5.13",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7"
+  }
+}

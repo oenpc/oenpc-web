@@ -473,13 +473,25 @@ apps/server/src/repositories/products/mapper.ts[D·PD·8·SQL·M]: F:行 → DTO
     ③ JSON 列解析失败返回 fallback 而不抛错；渠道的**枚举外平台被丢弃**，
     而不是原样透传渲染出一个空按钮
 
-apps/server/src/repositories/products/repository.ts[D·PD·9·SQL,PG,PERF·M]: F:产品仓储（SQL 只在此层与 db/）|
-  R:mapper.ts,services/products/service.ts | A:listProducts,getProductById,listPublishedSlugs |
+apps/server/src/repositories/products/port.ts[D·PD·9·PG·S]: F:产品仓储**端口**（接口，与驱动无关）|
+  R:repositories/products/sqlite.ts,services/products/service.ts | A:ProductRepository |
+  S:★ P0.1 补上的那一半「预留 PostgreSQL」：骨架阶段只收口了 SQL 方言，
+    但仓储签名直接吃 DatabaseSync —— 换 PG 时方言不用改，**每个仓储的签名与装配点却都要动**；
+    抽端口后，服务层依赖 ProductRepository，换驱动 = 新增一个实现 + 改 index.ts 一行装配；
+    ★ 端口里**不出现任何数据库类型**（DatabaseSync / SQLInputValue / Row 类型）——
+    一旦出现，这个接口就又绑死在 SQLite 上了；行类型转换是实现内部事务（mapper.ts）；
+    ★ 现在做只改 3 个签名，12 个域铺开后是几十处 —— 这是全项目唯一"成本随时间线性增长"的任务
+
+apps/server/src/repositories/products/sqlite.ts[D·PD·9·SQL,PG,PERF·M]: F:产品仓储的 SQLite 实现（SQL 只在此层与 db/）|
+  R:repositories/products/port.ts,repositories/products/mapper.ts,db/dialect.ts |
+  A:createSqliteProductRepository |
   S:★ 列表取**全部语种**的翻译而不只是请求语种 —— hreflang 需要每个语种的 slug，
     只取请求语种则构建期生成不出互指链接，而互指错了搜索引擎会判重复内容；
     ★ 多次查询而非一次多表 JOIN：JOIN N图×M渠道×K规格会行倍增，产品一多列表耗时随图数增长；
     ★ LIKE 的 % / _ / \ 必须转义，否则访客搜一个 % 就等于匹配全表；
-    node:sqlite 的 double-cast 收口在 queryAll / queryOne 两个函数里
+    node:sqlite 的 double-cast 收口在 queryAll / queryOne 两个函数里；
+    ⚠ 本文件的 SQL 是可移植的（portable-sql 守着），但**两处方言差异检查器检测不到**：
+    占位符 `?` vs `$1`、以及 `LIKE` 在 PG 下大小写敏感（需换 ILIKE）—— 只能靠评审
 
 apps/server/src/services/products/service.ts[S·PD·8·SEC·S]: F:产品应用服务（编排 + 访问策略）|
   R:core/errors.ts,repositories/products/repository.ts | A:requireLocale,listPublicProducts,getPublicProduct |
@@ -508,17 +520,132 @@ apps/server/src/routes/products/index.ts[R·PD·7··S]: F:产品路由注册 |
     **不存在** nginx 那种前缀 location 吃掉真实路由的问题（P-07 是 nginx 侧的陷阱）
 ```
 
-### 2.4 待建（骨架未覆盖的部分）
+### 2.4 前台 `apps/web`（✅ SSG 已跑通 —— P0.3 spike 的产物）
+
+```
+apps/web/vite.config.ts[E·CO·7·SSG·S]: F:Vite 配置（客户端与 SSR 共用）|
+  R:apps/web/scripts/prerender.mjs,apps/web/tsconfig.json | A:- |
+  S:★ 客户端与 SSR 用**同一份配置**，靠 CLI 的 --ssr 与 --outDir 区分；
+    两次构建的 outDir 必须不同，且 **SSR 那次不能 emptyOutDir** ——
+    否则第二次构建会把刚产出的客户端产物删掉，症状很像"构建顺序错了"
+
+apps/web/src/env.d.ts[E·CO·3··S]: F:`*.vue` 模块形状声明 |
+  R:apps/web/tsconfig.json | A:- |
+  S:只为让 `tsc --noEmit` 能解析 .vue 导入；**真正的 SFC 类型检查要靠 vue-tsc**（P1 引入）。
+    没有它，每个 .vue 导入都会报 TS2307
+
+apps/web/src/main.ts[E·CO·8·SSG,SEC·S]: F:客户端入口（在预渲染 HTML 上水合）|
+  R:apps/web/src/app.ts,apps/web/src/site-context.ts | A:- |
+  S:★ **不能用顶层 await** —— Vite 默认构建目标（es2020）不支持，会直接构建失败
+    （`Top-level await is not available in the configured target environment`）。
+    解法是包成 async 函数而不是提高 build.target：为一个语法糖把整站兼容性门槛
+    抬到 ES2022 不划算，而外贸站访客的浏览器分布很杂；
+    硬约束 runtime-config 在此落地：站点数据来自 window.__APP_DATA__（运行时），
+    不是 import.meta.env（构建期）；缺这份数据要**明确报错**，不能静默降级渲染空白页
+
+apps/web/src/entry-server.ts[E·CO·8·SSG,SEO·S]: F:SSR 入口 + head 生成 |
+  R:apps/web/src/seo/urls.ts,apps/web/scripts/prerender.mjs | A:renderPage,re-export 路径与文案工具 |
+  S:★ 把 SEO 片段放在 SSR 侧而不是让预渲染脚本自己拼，是为了让 hreflang / canonical /
+    <html lang> **三者永远同源** —— 分头计算时最常见的 bug 是 hreflang 写 zh-Hans
+    而 html lang 还写着 zh；
+    ★ 返回值带 `routeName`：预渲染脚本据此断言路由真的匹配上了（见 P-16 陷阱）
+
+apps/web/src/app.ts[E·CO·8·SSG·S]: F:应用工厂（SSR 与客户端共用）|
+  R:apps/web/src/router.ts,apps/web/src/site-context.ts | A:createApp |
+  S:★ 两端**必须**复用同一个 createApp：各建一套会让组件树 / provide / 路由表漂移，
+    而漂移的症状是水合失败 —— 页面看起来正常，交互却失效
+
+apps/web/src/router.ts[X·CO·8·SEO·S]: F:路由表与 URL 结构（**决策 2**）|
+  R:apps/web/src/seo/urls.ts,apps/web/src/pages/ | A:routes,createAppRouter,DEFAULT_HOME_PATH |
+  S:★ URL 前缀选 `/<locale>/...` 而不是子域名：一份 TLS 证书 + 一套 nginx 配置 +
+    域名权重集中在一个域（新站起步阶段这点重要）；代价是 `/` 需要一次跳转；
+    `strict: true` 保留尾斜杠差异 —— `/en` 与 `/en/` 不做自动归一，避免产生两个可索引地址；
+    历史模式由调用方注入（SSR 用 memory、浏览器用 web），保证两端路由一致
+
+apps/web/src/site-context.ts[X·UI·7·SSG·S]: F:站点上下文（provide/inject）|
+  R:apps/web/src/app.ts,apps/web/src/i18n/messages.ts | A:SiteContext,SITE_CONTEXT,useSite |
+  S:★ **不用模块级可变状态**：SSR 在同一进程里顺序渲染多个页面，模块级状态会跨渲染泄漏
+    （上一个页面的产品串到下一个页面），症状是"偶发出现别的产品名"，极难复现；
+    provide/inject 的生命周期绑在 app 实例上，天然没有这个问题
+
+apps/web/src/i18n/messages.ts[N·ST·5·I18N·S]: F:界面文案（最小静态映射）|
+  R:apps/web/src/site-context.ts | A:MESSAGES,messagesFor |
+  S:spike 阶段不强引 vue-i18n（要验证的是预渲染管线，不是 i18n 库选型）；
+    P1.2 会换成按域拆分的资源文件，但**组件里的调用形态不变**（始终是 messages.xxx），
+    所以替换成本被限制在这一个文件；
+    ⚠ 文案键在各语种间必须齐平 —— 缺键的症状是页面上显示键名本身
+
+apps/web/src/seo/urls.ts[X·ST·9·SEO,I18N·S]: F:URL 结构 与 hreflang 互指（**决策 2 落点**）|
+  R:apps/web/src/router.ts,apps/web/src/entry-server.ts,packages/shared/src/locales.ts |
+  A:HREFLANG_TAGS,homePath,productListPath,productDetailPath,absoluteUrl,seoHead,htmlLang |
+  S:★ 单独成文件是因为 URL 结构是**对外公开契约**，一旦被收录再改就是丢排名 ——
+    收在一处才能让"改 URL 结构"成为一次可审计的改动，而不是几十处字符串替换；
+    ★ `hreflang` 值**不等于** URL 前缀：URL 用短码 `/zh/` 保持可读，而 hreflang 要符合
+    ISO 639-1（+可选 script/region）—— **简繁是不同内容**，只写 `zh` 搜索引擎无法区分，
+    故映射为 `zh-Hans`；
+    ★ 必须有 `x-default`：它是语言定向不匹配时的兜底入口，漏了会让这部分访客落到
+    搜索引擎随机选中的语种页面上
+
+apps/web/src/App.vue[O·UI·7·SEO,I18N·S]: F:站点外壳（导航 + 语言切换 + RouterView）|
+  R:apps/web/src/site-context.ts,apps/web/src/seo/urls.ts | A:- |
+  S:★ 语言切换用普通 `<a>` 而**不走前端路由**：静态站点上这只是一次廉价的整页加载，
+    却换来两个好处 —— 不引入客户端语言状态（少一处水合不一致的来源），
+    且每个语种都有独立 URL；
+    切换链接缺失的语种回退到该语种首页，**不能指向"该页在那种语言下不存在"的地址** ——
+    那会产生软 404，而软 404 会被搜索引擎记为低质量页面
+
+apps/web/src/pages/[V·UI·7·SEO·S]: F:页面（首页 / 列表 / 详情 / 404）|
+  R:apps/web/src/site-context.ts,apps/web/src/seo/urls.ts | A:各页面组件 |
+  S:★ **目录条目**：新增一个页面不需要新条目；
+    ⚠ 这一组页面实际横跨 `CT`（首页）/ `PD`（列表与详情）/ `UI`（404）三个域，
+    但目录条目只能填**一个**坐标 —— 这是面模型对目录条目的固有限制。
+    取 `UI` 是因为该组的共同约束（SEO、文案不硬编码）属于前端壳的范畴；
+    **需要按域分开约束时，就不要用目录条目，改为逐文件写**；
+    列表页取当前语种 slug 时回退到 id —— 那是下策（`/en/products/p-123` 对搜索引擎
+    没有信息量），正常运营下每个产品都应有各语种 slug；
+    详情页的出站链接一律 target="_blank" + rel="noopener noreferrer"
+    （缺 noreferrer 会把含内部标识的来源 URL 交给第三方）
+
+apps/web/scripts/prerender.mjs[T·SC·9·SSG,SEO,PERF·M]: F:构建期预渲染（SSG 核心）|
+  R:apps/web/src/entry-server.ts,apps/server/src/routes/products/ | A:- |
+  S:★ **必须翻页取产品**：服务端 MAX_PAGE_SIZE=60，只取第一页会让产品超过 60 个时
+    构建"成功"但站点静默缺页 —— SSG 特有的一类静默失败；
+    ★ 每个产出页都断言 `routeName` 是预期值：URL 拼错会落到 not-found，
+    而预渲染**照样写出 HTML**，于是构建出一整站 404 页面且会被搜索引擎收录；
+    ★ 详情页必须走 GET /api/products/:id 取**完整 Product** —— 列表接口返回的是
+    ProductListItem，它故意不含 specs/description/mediaIds（spike 就是这么撞上的），
+    跨 JSON 边界 TS 类型不生效，所以还有一次运行时形状断言；
+    ★ 某语种缺翻译时**不产出该语种页面、也不在 hreflang 里宣告它**（软 404 + 重复内容）；
+    ★ 水合数据序列化时把 `<` 转成 \u003c —— JSON 里出现 </script> 会提前结束脚本标签；
+    ★ 构建依赖**运行中的 API**，所以它不能放进无条件的构建链（见根 package.json 的 build）
+```
+
+### 2.5 测试（`tests/`）
+
+```
+tests/[T·SC·7·SEC·S]: F:测试基线（单测 + 端到端回归）|
+  R:strata/constraints.mjs,package.json | A:各 *.test.mjs |
+  S:★ **目录条目**：新增测试文件不需要新条目；
+    跑的是**构建产物**（apps/server/dist），不是源码 —— 改了源码要先 pnpm build，
+    否则跑的是旧行为（陷阱 P-02）；子进程一律**不用管道**（stdio 给文件描述符），
+    受限环境下管道捕获子进程输出会失败；
+    SSG 回归会真的跑一次 Vite 构建（约 15s），换来的是**公开 URL 结构**有自动化守卫 ——
+    那是最贵、最不可逆的契约；
+    ⚠ 两个端到端测试各带一段"起服务+灌数据"，**出现第三个时就该抽 tests/lib/harness.mjs**
+```
+
+### 2.6 待建（骨架未覆盖的部分）
 
 > 这些面目前还没有条目 —— **新文件落在已有面上时不需要新约束**（锚定的收益），
 > 只有出现**新的面**时才需要新增规则。
 
 ```
-apps/web/src/**        [V/O/X/N·PD,CT,ST,UI·…]  前台 SSG 站点（尚未创建）
 apps/admin/src/**      [V/O/X/N·AU,PD,CT,IQ,…·…] 后台 SPA（尚未创建）
 apps/server/src/routes/<其他域>        [R·<域>·…]
 apps/server/src/repositories/<其他域>   [D·<域>·…]
 apps/server/src/db/（媒体 / 询盘 / 审计表）  [D·<域>·…]
+apps/web/src/components/               [O·UI,PD·…]（前台目前只有页面，尚无独立组件）
+apps/web/src/api/                      [X·CO·…]（运行时配置读取，尚未实现）
 ```
 
 > **条目粒度不是"每个文件一条"**（`reference.md` §4.4）：
@@ -576,6 +703,12 @@ V/O/X/R/S/D ──► packages/shared   （契约，全层可读）
 | P-13 | **`node:sqlite` 并发写锁** | 多进程/多连接同时写 → `SQLITE_BUSY` | 单进程写入；开 WAL；写事务短小 | 检查 PRAGMA 设置 | [结构] |
 | P-14 | **图片删除后前台 404** | 媒体库删了仍被产品引用的图片 | 引用计数 + 删除保护 | 删除前检查引用 | [结构] |
 | P-15 | **面对称性：两个 app 的入口落在同一个面上** | 前后端各有入口（`apps/server/src/index.ts` 与 `apps/web/src/main.ts`），**两者坐标都是 `⟨E,CO⟩`** —— 面无法区分"服务端入口"与"站点入口"，于是锚在 `⟨E,CO⟩` 的约束会同时命中两侧 | 只适用于一侧的约束，锚在**关注点真正所在的层**（如 API 客户端层 `X`），**不要锚在入口层 `E`**；确需覆盖 `E` 时必须确认该规则在两侧都成立 | 人工评审（不可判定 → exit 2）| [实测] 骨架落地时发现 |
+| P-16 | **预渲染会为"路由没匹配上"的 URL 照样写出 HTML** | 某个 URL 拼错 → 路由落到 `not-found` → 预渲染**照样产出该路径的 HTML**。于是构建"成功"，但产出一整站的 404 页面，而且搜索引擎会把它们全部收录。本地看目录结构一切正常 | 每个产出页都断言实际匹配到的路由名是**预期值**，不匹配即中止构建（`prerender.mjs` 已实现）| 构建期断言（已在 `prerender.mjs` 里）| [实测] spike 设计时预见 |
+| P-17 | **Vite 默认构建目标不支持顶层 await** | 客户端入口写了顶层 `await` → 构建直接失败：`Top-level await is not available in the configured target environment` | 包成 async 函数（推荐）或提高 `build.target` 到 `esnext`。**为一个语法糖把整站兼容性门槛抬到 ES2022 不划算** —— 外贸站访客的浏览器分布很杂 | 构建（失败即暴露）| [实测] P0.3 |
+| P-18 | **列表形状 ≠ 详情形状，跨 JSON 边界 TS 类型不生效** | 用列表接口返回的 `ProductListItem` 去渲染详情页 → 缺 `specs`/`description`/`mediaIds`，SSR 渲染到一半抛 `Cannot read properties of undefined`，栈里全是 Vue 内部帧 | 详情页必须走 `GET /api/products/:id` 取完整 `Product`；**在数据边界处做一次运行时形状断言**，让报错直接说清缺哪个字段 | 构建期形状断言（已在 `prerender.mjs` 里）| [实测] P0.3 撞上 |
+| P-19 | **SSG 构建依赖运行中的 API** | 预渲染要从 API 拉数据 → 构建机必须有可用的后端。若把 web 的构建放进无条件构建链（`pnpm -r build`），**没有后端时整条链都会失败** | 根 `package.json` 的 `build` 只构建 shared + server；web 的构建单独一条命令（`build:web`），由部署脚本或 CI 负责先起后端 | 根 `package.json` 的脚本划分 | [实测] P0.3 |
+| P-20 | **构建期只取一页产品 = 站点静默缺页** | 服务端 `MAX_PAGE_SIZE = 60`。预渲染只取第一页时，产品超过 60 个后**构建照样成功，但站点少了页面** —— 直到有人在搜索里找不到自己的产品 | 预渲染**必须翻页取完**（按 `total` 判断），并在超过页数上限时**中断构建**而不是产出不完整的站点 | 已在 `prerender.mjs` 实现；可加断言"产出页数 == total × 语种数" | [实测] P0.3 |
+| P-21 | **SSR 里的模块级可变状态会跨页面泄漏** | 把站点数据放在模块级 `reactive`/普通变量里 → 同一进程顺序渲染多个页面时，上一个页面的数据串到下一个。症状是"某些页面偶发出现别的产品名"，**极难复现** | 用 `provide`/`inject`（生命周期绑在 app 实例上），或每次渲染新建实例。**禁止模块级可变状态** | 人工评审（不可判定 → exit 2）| [结构] 已在 `site-context.ts` 设计上规避 |
 
 ---
 
@@ -606,29 +739,40 @@ V/O/X/R/S/D ──► packages/shared   （契约，全层可读）
 ## 6. 本实例的自测指标
 
 > **STRATA 的收益是假设，不是已验证的事实。本节的数字就是本项目对它的检验。**
-> 测量时间：**骨架落地后**（契约层 + 服务端一个垂直切片，共 20 个源码文件；前台/后台尚未创建）。
+> 测量时间：**P0 结束**（契约层 7 + 服务端 13 + 前台 15 + 测试 5 + 规范层 13 = 54 个源码文件）。
 
 | 指标 | 定义 | 本实例值 | 判据 |
 |---|---|---|---|
-| 条目数 `\|F\|` | 索引覆盖的 code unit 数 | **31** | — |
-| 面数 `\|faces\|` | 实测用到的 `⟨层,域⟩` 组合数 | **13** | 上界 132 |
-| **`κ`** | 共享面（≥2 条目）覆盖的条目比例 | **0.774**（6 个共享面 / 7 个单件面）| **< 0.3 则本项目不适用** |
-| `γ` | 新增文件里"需要新增约束"的比例 | **尚不具区分力** —— 见 §6.2 | 面制应显著低于逐点制 |
+| 条目数 `\|F\|` | 索引覆盖的 code unit 数 | **46** | — |
+| 面数 `\|faces\|` | 实测用到的 `⟨层,域⟩` 组合数 | **19** | 上界 132 |
+| **`κ`** | 共享面（≥2 条目）覆盖的条目比例 | **0.717** | **< 0.3 则本项目不适用** |
+| `γ` | 新增文件里"需要新增约束"的比例 | 见 §6.2 | 面制应显著低于逐点制 |
 
-### 6.1 κ 现在**有区分力**了，但它测的是"面密"，不是"方法有效"
+### 6.1 κ **有区分力**，但它测的是"面密"，不是"方法有效"
 
-`κ = 0.774` 来自 13 个面，不再是单面退化值，所以可以下这个结论：
-**在本字典与目录布局下，面确实起到了压缩作用** —— 77.4% 的条目与至少一个其他条目同面。
-作为参照，STRATA 的起源案例是 **0.68**。
+`κ = 0.717` 来自 19 个面。作为参照，STRATA 的起源案例是 **0.68**。
 
 **但这不是"面锚定有效"的证据。** κ 只说明"面是有效的压缩"，
 不说明"约束因此更容易被遵守"。后者要靠 STRATA 尚未完成的实验（E1–E4）回答。
 本节的结论边界因此是：**测量可信，收益待检验。**
 
-> **与骨架前的对比值得记下来**：当时 `κ = 1.000`，但 `|faces| = 1` —— 那是**退化值**
-> （单个面装下全部条目，κ 必然为 1），`strata/measure-index.mjs` 的退化守卫会拒绝
-> 给出"适用"的结论。产品代码落地后这个问题自动消失。
-> **这正说明骨架期的 κ 不能用来下任何结论** —— 一个"漂亮"的 κ 可以是纯粹的假信号。
+> ### 值得记下的两次变化
+>
+> | 时点 | `\|F\|` | `\|faces\|` | `κ` | 读法 |
+> |---|---|---|---|---|
+> | 规范层落地 | 11 | 1 | **1.000** | **退化值** —— 单面装下全部条目，κ 必然为 1；退化守卫会拒绝下结论 |
+> | 骨架落地（后端）| 31 | 13 | **0.774** | 首次有区分力 |
+> | P0 结束（加前台与测试）| 46 | 19 | **0.717** | **κ 降了** |
+>
+> **κ 从 0.774 降到 0.717，是真实信号而不是退化**：前台引入了 `V/O/X/N` 四个层
+> 与 `UI/ST/CT` 等域的组合，而前台当前只有 15 个文件，**多数面是单件的**
+> （`K·ST`、`K·AU`、`K·CH`、`K·PD`、`C·CO`、`S·PD`、`R·CO`、`N·ST`、`O·UI`…）。
+> 后端反而更"面密"：它每个域都有 `R`/`S`/`D` 三层配套。
+>
+> **含义**：κ 会随**骨架期**的推进而波动，「页面数少于域数」时前台天然稀疏。
+> 这不是方法失效，而是**业务量还没填进来**。按 STRATA §3.4 的实测修正，
+> 收益本来就不均匀 —— 重区（后端 `D`/`R`、`E·CO`、`K·CO`）承担了大部分条目，
+> 轻区（前台各域）当前是单件面。**下结论要等 P1/P2 结束后重测。**
 
 ### 6.2 `γ` 目前仍不具区分力
 

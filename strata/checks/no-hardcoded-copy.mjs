@@ -45,6 +45,24 @@ function templateBlock(source) {
   return { block, lineOffset }
 }
 
+/**
+ * 把 HTML 注释替换成**等量空白**（保留换行，否则行号会错位）。
+ *
+ * ## 为什么必须处理**跨行**注释
+ *
+ * 早期版本按行剥 `<!-- ... -->`，于是**跨行注释里的中文被当成了正文** ——
+ * 这是一个真实的误报：`App.vue` 里那段解释"语言切换为什么用 `<a>`"的多行注释
+ * 被报了 3 处违规，而且因为注释被逐行剥掉，报出来的文本还是残缺的
+ * （`语言切换用普通 ，不走前端路由。` —— `<a>` 被当成标签删了）。
+ *
+ * 这类误报的后果不是"多几条噪音"，而是**约束失效**：
+ * 一个开始喊狼来了的约束会被绕过，然后彻底不再被当真（STRATA 的明确警告）。
+ * 所以宁可在这里多写十行，也不让报出来的东西不可信。
+ */
+function blankHtmlComments(text) {
+  return text.replace(/<!--[\s\S]*?-->/g, (match) => match.replace(/[^\n]/g, ' '))
+}
+
 export async function run({ root, targets }) {
   if (!targets || targets.length === 0) {
     return {
@@ -82,9 +100,20 @@ export async function run({ root, targets }) {
     const extracted = templateBlock(source)
     if (!extracted) continue
     const { block, lineOffset } = extracted
-    const lines = block.split('\n')
 
-    lines.forEach((raw, index) => {
+    /*
+     * 两份行数组，**按下标一一对应**：
+     *   · rawLines     —— 原文，用于识别豁免标记（标记本身就是一条 HTML 注释）
+     *   · contentLines —— 注释已被抹成空白，用于判定文案
+     *
+     * 为什么不先用一份：`strata-allow-copy` 写在 `<!-- ... -->` 里，
+     * 若先把注释抹掉，豁免标记自己就先没了。
+     */
+    const rawLines = block.split('\n')
+    const contentLines = blankHtmlComments(block).split('\n')
+
+    contentLines.forEach((line, index) => {
+      const raw = rawLines[index] ?? ''
       const lineNumber = lineOffset + index + 1
 
       /*
@@ -95,16 +124,15 @@ export async function run({ root, targets }) {
        */
       const escaped =
         raw.includes('strata-allow-copy') ||
-        (index > 0 && lines[index - 1].includes('strata-allow-copy'))
+        (index > 0 && (rawLines[index - 1] ?? '').includes('strata-allow-copy'))
       if (escaped) {
-        if (CJK.test(raw.replace(/<[^>]*>/g, ''))) {
+        if (CJK.test(blankHtmlComments(raw).replace(/<[^>]*>/g, ''))) {
           allowed.push({ file: relative, line: lineNumber, text: raw.trim().slice(0, 90) })
         }
         return
       }
 
-      const line = raw.replace(/<!--[\s\S]*?-->/g, '')
-
+      /* 判定用 `line`（注释已抹白）；豁免与行号用 `raw`。 */
       for (const match of line.matchAll(STATIC_ATTR)) {
         if (CJK.test(match[2])) {
           candidates.push({

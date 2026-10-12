@@ -1,5 +1,5 @@
 /**
- * 产品仓储实现（PD 域）—— **SQL 只允许出现在这一层与 db/**。
+ * `ProductRepository` 端口的 **SQLite 实现**（PD 域）—— **SQL 只允许出现在这一层与 `db/`**。
  *
  * 约束 `no-sql-in-routes` 守着这条边界：R / C 层出现 SQL 即判失败。
  * 理由不是洁癖，而是「预留 PostgreSQL」：SQL 散落在路由里，换库就要改遍所有路由。
@@ -22,10 +22,19 @@
  * ### 3. LIKE 的用户输入必须转义
  *
  * 不转义的话，访客搜索一个 `%` 就会匹配全部产品（等于把搜索变成全表扫描）。
+ *
+ * ## 加 PG 实现时要注意什么
+ *
+ * 本文件里的 SQL 本身是可移植的（没有 `INSERT OR REPLACE` / `AUTOINCREMENT` /
+ * `datetime('now')` —— 由 `portable-sql` 守着）。**但有两处方言差异检查器检测不到**：
+ *   · 参数占位符 `?`（SQLite）→ `$1`（PG）
+ *   · `LIKE` 在 SQLite 对 ASCII 大小写不敏感，PG 的 `LIKE` 敏感（需换 `ILIKE`）
+ * 以及一处行为差异：`COUNT(*)` 在 SQLite 返回 number，PG 的 `bigint` 需要转换。
  */
 
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
-import type { Page, Product, ProductListItem, ProductQuery } from '@oenpc-web/shared'
+import type { LocaleCode, Page, Product, ProductListItem, ProductQuery } from '@oenpc-web/shared'
+import type { ProductRepository } from './port.js'
 import {
   toProduct,
   toProductListItem,
@@ -91,7 +100,6 @@ function buildFilters(query: ProductQuery): { where: string; params: SQLInputVal
      *
      * ⚠ 方言差异（检查器检测不到，靠评审）：`LIKE` 在 SQLite 对 ASCII 大小写不敏感，
      *   而 PostgreSQL 的 `LIKE` 是**大小写敏感**的，PG 实现需要换成 `ILIKE`。
-     *   这属于 db/dialect.ts 声明的"检测不到的方言差异"。
      */
     conditions.push(
       `EXISTS (
@@ -158,96 +166,95 @@ function fetchChannels(
   return grouped
 }
 
-/** 分页查询产品列表。 */
-export function listProducts(db: DatabaseSync, query: ProductQuery): Page<ProductListItem> {
-  const { page, pageSize, offset } = normalizePaging(query)
-  const { where, params } = buildFilters(query)
-
-  const totalRow = queryOne<{ total: number }>(
-    db,
-    `SELECT COUNT(*) AS total FROM product p ${where}`,
-    params,
-  )
-  const total = totalRow?.total ?? 0
-
-  const rows = queryAll<ProductRow>(
-    db,
-    `SELECT p.id, p.category_id, p.cover_media_id, p.published, p.sort_order,
-            p.created_at, p.updated_at
-     FROM product p
-     ${where}
-     ORDER BY p.sort_order ASC, p.created_at DESC
-     LIMIT ? OFFSET ?`,
-    [...params, pageSize, offset],
-  )
-
-  const ids = rows.map((row) => row.id)
-  const translations = fetchTranslations(db, ids)
-  const channels = fetchChannels(db, ids)
-
-  return {
-    items: rows.map((row) =>
-      toProductListItem(row, translations.get(row.id) ?? [], channels.get(row.id) ?? []),
-    ),
-    total,
-    page,
-    pageSize,
-  }
-}
-
 /**
- * 取单个产品的完整外形。
+ * 用给定的 SQLite 连接创建产品仓储。
  *
- * `id` 是主键，查询一定命中索引；返回 `null` 表示不存在 ——
- * **不要把"不存在"和"出错"混成同一个返回值**，调用方需要区分 404 与 500。
+ * 装配点只有一个（`apps/server/src/index.ts`）—— 这是端口存在的实际收益：
+ * 换驱动时改的是那一行，不是所有调用方。
  */
-export function getProductById(db: DatabaseSync, id: string): Product | null {
-  const row = queryOne<ProductRow>(
-    db,
-    `SELECT id, category_id, cover_media_id, published, sort_order, created_at, updated_at
-     FROM product WHERE id = ?`,
-    [id],
-  )
+export function createSqliteProductRepository(db: DatabaseSync): ProductRepository {
+  return {
+    list(query: ProductQuery): Page<ProductListItem> {
+      const { page, pageSize, offset } = normalizePaging(query)
+      const { where, params } = buildFilters(query)
 
-  if (!row) return null
+      const totalRow = queryOne<{ total: number }>(
+        db,
+        `SELECT COUNT(*) AS total FROM product p ${where}`,
+        params,
+      )
+      const total = totalRow?.total ?? 0
 
-  const translations = fetchTranslations(db, [id]).get(id) ?? []
-  const channels = fetchChannels(db, [id]).get(id) ?? []
+      const rows = queryAll<ProductRow>(
+        db,
+        `SELECT p.id, p.category_id, p.cover_media_id, p.published, p.sort_order,
+                p.created_at, p.updated_at
+         FROM product p
+         ${where}
+         ORDER BY p.sort_order ASC, p.created_at DESC
+         LIMIT ? OFFSET ?`,
+        [...params, pageSize, offset],
+      )
 
-  const specs = queryAll<ProductSpecRow>(
-    db,
-    `SELECT product_id, position, key_json, value_json
-     FROM product_spec WHERE product_id = ? ORDER BY position ASC`,
-    [id],
-  )
+      const ids = rows.map((row) => row.id)
+      const translations = fetchTranslations(db, ids)
+      const channels = fetchChannels(db, ids)
 
-  const mediaRows = queryAll<{ media_id: string }>(
-    db,
-    'SELECT media_id FROM product_media WHERE product_id = ? ORDER BY position ASC',
-    [id],
-  )
+      return {
+        items: rows.map((row) =>
+          toProductListItem(row, translations.get(row.id) ?? [], channels.get(row.id) ?? []),
+        ),
+        total,
+        page,
+        pageSize,
+      }
+    },
 
-  return toProduct(
-    row,
-    translations,
-    specs,
-    mediaRows.map((media) => media.media_id),
-    channels,
-  )
-}
+    getById(id: string): Product | null {
+      const row = queryOne<ProductRow>(
+        db,
+        `SELECT id, category_id, cover_media_id, published, sort_order, created_at, updated_at
+         FROM product WHERE id = ?`,
+        [id],
+      )
 
-/** 某语种下的全部已上架 slug —— 构建 sitemap 与 hreflang 需要它。 */
-export function listPublishedSlugs(
-  db: DatabaseSync,
-  locale: string,
-): Array<{ id: string; slug: string }> {
-  return queryAll<{ id: string; slug: string }>(
-    db,
-    `SELECT p.id AS id, t.slug AS slug
-     FROM product p
-     JOIN product_translation t ON t.product_id = p.id AND t.locale = ?
-     WHERE p.published = 1
-     ORDER BY p.sort_order ASC`,
-    [locale],
-  )
+      if (!row) return null
+
+      const translations = fetchTranslations(db, [id]).get(id) ?? []
+      const channels = fetchChannels(db, [id]).get(id) ?? []
+
+      const specs = queryAll<ProductSpecRow>(
+        db,
+        `SELECT product_id, position, key_json, value_json
+         FROM product_spec WHERE product_id = ? ORDER BY position ASC`,
+        [id],
+      )
+
+      const mediaRows = queryAll<{ media_id: string }>(
+        db,
+        'SELECT media_id FROM product_media WHERE product_id = ? ORDER BY position ASC',
+        [id],
+      )
+
+      return toProduct(
+        row,
+        translations,
+        specs,
+        mediaRows.map((media) => media.media_id),
+        channels,
+      )
+    },
+
+    listPublishedSlugs(locale: LocaleCode): Array<{ id: string; slug: string }> {
+      return queryAll<{ id: string; slug: string }>(
+        db,
+        `SELECT p.id AS id, t.slug AS slug
+         FROM product p
+         JOIN product_translation t ON t.product_id = p.id AND t.locale = ?
+         WHERE p.published = 1
+         ORDER BY p.sort_order ASC`,
+        [locale],
+      )
+    },
+  }
 }

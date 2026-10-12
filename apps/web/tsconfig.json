@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "noEmit": true,
+    /*
+     * 只要 vite/client。**不要加 "node"** —— `apps/web/src` 里不出现任何 Node API
+     * （只有构建期的 `scripts/prerender.mjs` 用，而它是 .mjs，不参与类型检查）。
+     * 加上它就得为一个用不到的依赖装 @types/node。
+     */
+    "types": ["vite/client"],
+    "verbatimModuleSyntax": true
+  },
+  /*
+   * 只检查 .ts。`*.vue` 的类型检查需要 `vue-tsc`（家族用的是它），
+   * 那是 P1 的事 —— 本阶段是 spike，要验证的是预渲染管线，不是 SFC 类型。
+   * `src/env.d.ts` 提供 `*.vue` 的模块声明，让 tsc 能解析这些导入。
+   */
+  "include": ["src/**/*.ts", "vite.config.ts"]
+}

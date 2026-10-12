@@ -18,6 +18,7 @@ import { buildApp } from './app.js'
 import { loadConfig } from './config.js'
 import { openDatabase } from './db/connection.js'
 import { migrate } from './db/migrations.js'
+import { createSqliteProductRepository } from './repositories/products/sqlite.js'
 
 async function main(): Promise<void> {
   const startedAtMs = Date.now()
@@ -27,8 +28,14 @@ async function main(): Promise<void> {
   const migration = migrate(opened.db)
 
   const app = buildApp({
-    db: opened.db,
     config,
+    /*
+     * 装配点只有这一处。换 PostgreSQL 时，这里把 createSqliteProductRepository
+     * 换成 createPostgresProductRepository 即可 —— 服务层与路由层都不用动。
+     */
+    repositories: {
+      products: createSqliteProductRepository(opened.db),
+    },
     databasePath: opened.path,
     appliedMigrations: migration.applied.length,
     startedAtMs,

@@ -15,8 +15,10 @@
     "strata:measure": "node strata/measure-repo.mjs --root . --layers routes,core,services,repositories,db,views,components,stores,api,locales,contract --domains products,content,channels,inquiry,media,site,reports,audit,auth,common,ui",
     "strata:measure:index": "node strata/measure-index.mjs",
     "dev:server": "pnpm --filter @oenpc-web/server dev",
-    "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck"
+    "build": "pnpm --filter @oenpc-web/shared --filter @oenpc-web/server build",
+    "build:web": "pnpm --filter @oenpc-web/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm build && node --test"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

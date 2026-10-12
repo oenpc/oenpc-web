@@ -31,10 +31,22 @@ fi
 
 A_HOST="${A_HOST:-172.19.3.47}"
 A_USER="${A_USER:-root}"
-SITE_URL="${OENPC_WEB_SITE_URL:-http://${A_HOST}}"
-API_BASE="${OENPC_WEB_API_BASE:-http://172.19.229.191:3900}"
+
+# ★ 取值优先级必须是**三级**：已有值（配置文件 / 环境变量）> OENPC_WEB_SITE_URL > 默认值。
+#
+# 早期版本写的是 SITE_URL="${OENPC_WEB_SITE_URL:-http://${A_HOST}}" ——
+# 它会把 .publish-site.env 里刚设好的 SITE_URL **直接覆盖掉**
+# （因为 OENPC_WEB_SITE_URL 通常没设，于是落到默认值）。
+# 后果极隐蔽：配置文件看起来生效了，脚本也"成功"了，
+# 但构建出来的页面与 sitemap 仍指向旧地址。
+SITE_URL="${SITE_URL:-${OENPC_WEB_SITE_URL:-http://${A_HOST}}}"
+API_BASE="${API_BASE:-${OENPC_WEB_API_BASE:-http://172.19.229.191:3900}}"
 SITE_DIR="${SITE_DIR:-/var/www/oenpc-web/site}"
 ADMIN_DIR="${ADMIN_DIR:-/var/www/oenpc-web/admin}"
+
+# 立刻回显生效值 —— 配置没传进来时，第一眼就能看到，不必等构建跑完
+printf '配置：SITE_URL=%s\n      API_BASE=%s  远程=%s@%s\n' \
+  "$SITE_URL" "$API_BASE" "$A_USER" "$A_HOST"
 
 BUILD=1
 DRY_RUN=0
@@ -165,6 +177,33 @@ REMOTE_URLS=$(grep -c '<loc>' "$TMP_SITEMAP" 2>/dev/null || true)
 echo "  A 机 sitemap 页面数: ${REMOTE_URLS}（本地 ${LOCAL_URLS}）  HTTP ${REMOTE_CODE}"
 if [ "$EFFECTIVE_URL" != "${SITE_URL}/sitemap.xml" ]; then
   echo "  实际取到的是: ${EFFECTIVE_URL}"
+fi
+
+# ★ 核对**产物里的主机名**与配置的 SITE_URL 是否一致。
+#
+# 这是"构建时用的不是这个 SITE_URL"的直接证据 —— 例如配置文件没生效、
+# 或产物是上一次构建留下的。**只看页面数是看不出这一类问题的**：
+# 页面数可以完全正确，而里面每个 URL 的主机名都是错的。
+if [ "$REMOTE_URLS" != "0" ]; then
+  SITEMAP_HOST=$(grep -o '<loc>[^<]*' "$TMP_SITEMAP" | head -1 | sed 's|<loc>||' | sed -E 's#^https?://([^/]+).*#\1#')
+  SITE_HOST=$(printf '%s' "$SITE_URL" | sed -E 's#^https?://([^/]+).*#\1#')
+  if [ "$SITEMAP_HOST" != "$SITE_HOST" ]; then
+    echo "" >&2
+    echo "❌ 页面里的主机名与 SITE_URL 不一致" >&2
+    echo "   产物里是： ${SITEMAP_HOST}" >&2
+    echo "   配置里是： ${SITE_HOST}" >&2
+    echo "
+   说明**本次构建用的不是这个 SITE_URL**（产物是旧的，或配置没传进构建）。
+
+   依次核对：
+     cat /opt/oenpc-web/.publish-site.env                 # SITE_URL 写对了吗
+     echo \"OENPC_WEB_SITE_URL=\$OENPC_WEB_SITE_URL\"       # 若它有值，会覆盖配置文件
+     grep -n 'SITE_URL=' /opt/oenpc-web/scripts/publish-site.sh | head -2
+
+   改完**必须重新构建**（SITE_URL 是构建期写进 HTML 与 sitemap 的）。" >&2
+    rm -f "$TMP_SITEMAP"
+    exit 1
+  fi
 fi
 
 if [ "$REMOTE_URLS" != "$LOCAL_URLS" ]; then

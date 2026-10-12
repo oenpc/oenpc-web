@@ -245,11 +245,53 @@ if [ "$REMOTE_URLS" != "$LOCAL_URLS" ]; then
 fi
 rm -f "$TMP_SITEMAP"
 
-# 经 A 机反代的健康检查（同样跟随重定向）
-if curl -fsSL --max-time 10 "${SITE_URL}/api/health" >/dev/null; then
+# 经 A 机反代的健康检查（跟随重定向，并报出状态码与响应片段）
+#
+# 只说"不通"没有可操作性。必须区分三种情况：
+#   · 44x/200 但不是 JSON -> 请求没被代理到应用，被静态站回落吃掉了
+#   · 502/504             -> nginx 连不上后端（网络/监听地址/服务没跑）
+#   · 000                 -> 连 nginx/TLS 都没通
+TMP_HEALTH=$(mktemp)
+HEALTH_CODE=$(curl -sSL --max-time 10 -o "$TMP_HEALTH" -w '%{http_code}' "${SITE_URL}/api/health" || echo '000')
+HEALTH_BODY=$(head -c 120 "$TMP_HEALTH" 2>/dev/null | tr -d '\n')
+rm -f "$TMP_HEALTH"
+
+if [ "$HEALTH_CODE" = "200" ] && printf '%s' "$HEALTH_BODY" | grep -q '"ok"'; then
   echo "  经 A 机反代的 /api/health ✓"
 else
-  echo "  ⚠ ${SITE_URL}/api/health 不通 —— 静态页已发布，但接口反代有问题（见 nginx 配置的 /api/ 段）" >&2
+  echo "" >&2
+  echo "⚠ ${SITE_URL}/api/health 异常（HTTP ${HEALTH_CODE}）" >&2
+  echo "   响应片段： ${HEALTH_BODY}" >&2
+
+  case "$HEALTH_CODE" in
+    000)
+      echo "
+   连站点都没连上 —— 域名解析 / TLS / nginx 本身的问题，先用浏览器确认站点能打开。" >&2
+      ;;
+    502|504)
+      echo "
+   nginx 连不上后端。在 A 机上直连试试：
+     curl -sS -o /dev/null -w '%{http_code}\\n' http://172.19.229.191:3900/api/health
+   直连也不通的话，检查 B 机：
+     · 服务在跑吗： systemctl status oenpc-web-server
+     · OENPC_WEB_HOST 必须是 172.19.229.191（填 127.0.0.1 时 A 机连不上）
+     · 防火墙放行 3900 了吗" >&2
+      ;;
+    *)
+      echo "
+   返回的不是接口 JSON —— 说明请求**根本没被代理到应用**，被静态站吃掉了。
+
+   检查 A 机那个域名的 server 块里有没有 /api/ 段：
+     sudo nginx -T | grep -n -A12 'location \\^~ /api/'
+
+   ★ 最常见的原因是 proxy_pass **结尾多了个斜杠**：
+       proxy_pass http://172.19.229.191:3900;     ← 正确，/api/health 原样转发
+       proxy_pass http://172.19.229.191:3900/;    ← 错误，会把 /api/ 剥掉
+                                                     变成 /health → 404
+   ★ 其次是压根没加这段 —— 那么 /api/health 会落到静态站的 index.html 上。" >&2
+      ;;
+  esac
+  echo "" >&2
 fi
 
 # 抽查首页确实拿得到

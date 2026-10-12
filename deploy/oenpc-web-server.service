@@ -1,16 +1,16 @@
-# OENPC-WEB 应用服务（B 机 systemd 单元）
+# OENPC-WEB 应用服务（B 机 172.19.229.191 / systemd）
 #
 # 安装：
 #   sudo cp deploy/oenpc-web-server.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now oenpc-web-server
 #
-# 查看日志：
+# 日志：
 #   sudo journalctl -u oenpc-web-server -f
 
 [Unit]
 Description=OENPC-WEB 应用服务（Fastify）
-Documentation=file:/opt/oenpc-web/server/DEPLOY.md
+Documentation=file:/opt/oenpc-web/docs/部署说明.md
 After=network-online.target
 Wants=network-online.target
 
@@ -19,13 +19,21 @@ Type=simple
 User=oenpc-web
 Group=oenpc-web
 
-# ★ WorkingDirectory 决定了**相对路径的解析基准**。
-#   数据库与媒体目录的默认值都是相对的（data/...），所以这里必须是 server 目录 ——
-#   改了它会让服务换一个库启动，而症状是"数据全没了"（其实只是换了个文件）。
-WorkingDirectory=/opt/oenpc-web/server
+# ★★ 关键：应用**在源码树里运行**，而不是把 dist 拷到一个独立目录。
+#
+# 原因是 pnpm 的依赖布局：`apps/server/node_modules/` 里全是**符号链接**
+# （fastify、@oenpc-web/shared 等），真正的包在仓库根的 `node_modules/.pnpm`。
+# 而编译产物在运行时**确实**会 `import '@oenpc-web/shared'`，它必须解析到
+# `packages/shared/dist/index.js`。
+#
+# 所以只把 dist 与 apps/server/node_modules 拷出去是**跑不起来**的：
+#   · 子包 node_modules 里的链接指向根 .pnpm，脱离仓库即失效；
+#   · 从 Windows 拷过来的链接是绝对路径，到了 Linux 直接断。
+# → 正确做法：整份源码放上去，在服务器上 `pnpm install` + `pnpm build`。
+WorkingDirectory=/opt/oenpc-web/apps/server
 
-# 配置从文件读，不要把密钥写进本单元（单元文件常被复制、常进版本库）
-EnvironmentFile=/opt/oenpc-web/server/.env
+# 配置从文件读，不要把内容写进本单元（单元文件常被复制、常进版本库）
+EnvironmentFile=/opt/oenpc-web/apps/server/.env
 Environment=NODE_ENV=production
 
 ExecStart=/usr/bin/node dist/index.js
@@ -39,7 +47,6 @@ Restart=always
 RestartSec=3
 
 # ── 基础加固 ──
-# 这些选项不影响功能，但能限制被攻破后的影响面。
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
@@ -48,11 +55,12 @@ ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 
-# ProtectSystem=strict 会把整个文件系统挂成只读，所以要显式放开数据目录
-ReadWritePaths=/opt/oenpc-web/data
+# ProtectSystem=strict 会把整个文件系统挂成只读，所以要显式放开需要写的路径：
+#   · 数据目录        —— SQLite 库与媒体文件
+#   · 仓库根          —— node 运行时可能写 pnpm 的临时文件；若不需要可去掉这一条
+ReadWritePaths=/opt/oenpc-web/data /opt/oenpc-web
 
 # ── 资源上限 ──
-# SQLite 单机场景下内存通常很低；给一个上限避免异常时的内存暴涨拖垮整机。
 MemoryMax=1G
 
 [Install]

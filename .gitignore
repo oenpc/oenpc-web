@@ -30,3 +30,6 @@ uploads/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 本机发布拓扑配置（A 机地址/用户/目录）—— 因机而异，不入库
+.publish-site.env

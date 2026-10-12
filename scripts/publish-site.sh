@@ -19,6 +19,16 @@
 
 set -euo pipefail
 
+# 可选：把本机拓扑配置放在仓库根的 .publish-site.env（已 gitignore），免得每次敲环境变量。
+# 例： A_USER=deploy        （A 机不允许 root 登录时必须改）
+#      SITE_DIR=/srv/www/oenpc-web/site
+# 先 source 再取默认值 —— 这样文件里的值优先，缺的才用默认。
+CONFIG_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.publish-site.env"
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$CONFIG_FILE"
+fi
+
 A_HOST="${A_HOST:-172.19.3.47}"
 A_USER="${A_USER:-root}"
 SITE_URL="${OENPC_WEB_SITE_URL:-http://${A_HOST}}"

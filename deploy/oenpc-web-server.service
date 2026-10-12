@@ -55,10 +55,12 @@ ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 
-# ProtectSystem=strict 会把整个文件系统挂成只读，所以要显式放开需要写的路径：
-#   · 数据目录        —— SQLite 库与媒体文件
-#   · 仓库根          —— node 运行时可能写 pnpm 的临时文件；若不需要可去掉这一条
-ReadWritePaths=/opt/oenpc-web/data /opt/oenpc-web
+# ProtectSystem=strict 会把整个文件系统挂成只读，所以要显式放开需要写的路径。
+#
+# **只放开数据目录** —— 服务只需要读代码、写 data/。
+# 早期版本还放开了 /opt/oenpc-web（整棵仓库），那既无必要也削弱了沙箱：
+# 应用没有任何理由去写自己的源码或 .git。
+ReadWritePaths=/opt/oenpc-web/data
 
 # ── 资源上限 ──
 MemoryMax=1G

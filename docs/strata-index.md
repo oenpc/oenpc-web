@@ -760,7 +760,21 @@ apps/server/src/cli/create-admin.ts[T·AU·8·SEC·S]: F:建/重置后台管理�
     ★ 重置口令时**必须清掉该账号全部会话** —— 用户改口令的动机往往正是"怀疑令牌泄露了"；
     直接跑迁移，允许在服务首次启动前就把账号建好
 
-scripts/release.mjs[T·SC·9·SEC·M]: F:生产发布打包（本机构建 → 自包含产物 → 上传）|
+scripts/publish-site.sh[T·SC·8·SEC·S]: F:一键发布站点到 A 机（在 B 机上执行）|
+  R:deploy/nginx.conf,docs/部署说明.md,apps/web/scripts/prerender.mjs | A:- |
+  S:★ 存在的理由是**顺序不能反**：前台是 SSG，页面由构建期从 API 拉数据生成，
+    必须先重建再传；反过来传上去的还是旧页面。脚本把顺序固定住，省掉"少跑一步"；
+    ★ rsync 源路径**结尾的斜杠至关重要**：`src/dir/` 传的是目录**内容**，
+    漏了斜杠会多出一层 `dir/`，症状是"文件明明传上去了但 nginx 404"；
+    ★ 前置检查用 `ssh -o BatchMode=yes` 先探一次免密登录 ——
+    否则 rsync 会在中途停下来问密码，无人值守时就卡死在那里；
+    缺 rsync 时直接给出 Debian/RHEL 的安装命令，而不是让后续步骤含糊地失败；
+    ★ 发布后**真的去 A 机取一次 sitemap 并比对页面数**：不验证的发布等于没发布 ——
+    文件可能落错目录、nginx 可能指向旧 root、中间可能隔着缓存，
+    这三种情况的共同点是**本地看起来完全正常**；
+    ★ `--no-build` 只重传（仅改了后台代码时用），`--dry-run` 先看会传什么
+
+scripts/release.mjs[T·SC·9··M]: F:生产发布打包（本机构建 → 自包含产物 → 上传）|
   R:apps/server/package.json,packages/shared/package.json,deploy/ | A:- |
   S:★ 存在的理由：本机 `node_modules` **不能**传到 Linux ——
     pnpm 子包 node_modules 里全是符号链接，真包在根 .pnpm；且 Windows 的链接是绝对路径，换机即断。

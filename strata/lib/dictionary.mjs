@@ -79,8 +79,18 @@ export const MALFORMED_RE = /^(\S+?)\[([^\]]+)\]:/
 /** 索引文件（相对仓库根）。 */
 export const INDEX_PATH = 'docs/strata-index.md'
 
-/** 参与「索引完整性」统计的源码扩展名。 */
-export const SOURCE_EXTS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs', '.vue']
+/**
+ * 参与「索引完整性」统计的源码扩展名。
+ *
+ * `.sh` / `.bash` 也要算 —— 部署脚本是**会被执行**的代码，
+ * 不纳入统计就是索引完整性的盲区（同 tests/ 的道理）。
+ */
+export const SOURCE_EXTS = [
+  '.ts', '.tsx', '.mts', '.cts',
+  '.js', '.mjs', '.cjs',
+  '.vue',
+  '.sh', '.bash',
+]
 
 /**
  * 参与统计的源码根目录。

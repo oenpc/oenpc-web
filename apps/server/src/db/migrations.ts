@@ -150,6 +150,72 @@ export const MIGRATIONS: readonly Migration[] = [
         ON purchase_channel (product_id, sort_order)`,
     ],
   },
+  {
+    id: '0002_init_auth_audit',
+    note: '后台最小闭环：用户、会话、审计日志',
+    statements: [
+      /*
+       * 用户表。
+       *
+       * `username` 加 UNIQUE 约束（而不是只在应用层查重）—— 并发注册时
+       * 应用层的"先查再插"会漏，而漏掉的症状是**登录时匹配到哪一条全靠运气**。
+       * 让数据库来保证唯一性，应用层只需处理约束冲突。
+       *
+       * `is_owner` 是**隐式全权**：不展开成权限点列表。否则每新增一个权限点
+       * 都要回头补超管，而漏补的症状是"超管突然失去新功能"，很难联想到权限配置。
+       */
+      `CREATE TABLE IF NOT EXISTS app_user (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_salt TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        display_name TEXT NOT NULL DEFAULT '',
+        permissions_json TEXT NOT NULL DEFAULT '[]',
+        is_owner INTEGER NOT NULL DEFAULT 0,
+        disabled INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+
+      /*
+       * 会话表。存的是**令牌的哈希**，不是令牌本身 ——
+       * 库泄露时攻击者也拿不到可用令牌（与口令存摘要同理）。
+       * `token_hash` 做主键：天然保证唯一，且查会话是一次主键命中。
+       */
+      `CREATE TABLE IF NOT EXISTS app_session (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL
+      )`,
+      /* 改口令或停用账号时要能一次性踢掉该用户的全部会话，所以按 user_id 建索引。 */
+      `CREATE INDEX IF NOT EXISTS idx_app_session_user ON app_session (user_id, expires_at)`,
+
+      /*
+       * 审计日志 —— **只追加**（硬约束 append-only-audit）。
+       *
+       * `actor_id` **故意不加外键**：用户被删除后审计记录必须留存，
+       * 否则"谁删的"这个最关键的问题会随着用户删除一起消失。
+       * 同理 `actor_name` 冗余存一份快照 —— 用户名后来改了，
+       * 历史记录仍应显示当时是谁。
+       *
+       * 应用层不提供任何 UPDATE / DELETE 入口；这一层由 `append-only-audit` 约束把关。
+       */
+      `CREATE TABLE IF NOT EXISTS audit_log (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT,
+        actor_name TEXT NOT NULL DEFAULT '',
+        action TEXT NOT NULL,
+        object_type TEXT NOT NULL DEFAULT '',
+        object_id TEXT NOT NULL DEFAULT '',
+        detail_json TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log (created_at DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_audit_log_object ON audit_log (object_type, object_id)`,
+    ],
+  },
 ]
 
 export interface MigrationResult {

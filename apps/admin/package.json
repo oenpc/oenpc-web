@@ -1,0 +1,22 @@
+{
+  "name": "@oenpc-web/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "后台管理 SPA（登录 / 产品管理 / 媒体上传）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@oenpc-web/shared": "workspace:*",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7"
+  }
+}

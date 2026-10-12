@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "noEmit": true,
+    /* 同 apps/web：只要 vite/client，不引入 @types/node（src 里不出现 Node API） */
+    "types": ["vite/client"],
+    "verbatimModuleSyntax": true
+  },
+  /* 只检查 .ts；.vue 的类型检查需要 vue-tsc（见 apps/web/tsconfig.json 的说明） */
+  "include": ["src/**/*.ts", "vite.config.ts"]
+}

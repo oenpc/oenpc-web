@@ -32,10 +32,20 @@
  * 以及一处行为差异：`COUNT(*)` 在 SQLite 返回 number，PG 的 `bigint` 需要转换。
  */
 
+import { randomUUID } from 'node:crypto'
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
-import type { LocaleCode, Page, Product, ProductListItem, ProductQuery } from '@oenpc-web/shared'
+import type {
+  LocaleCode,
+  Page,
+  Product,
+  ProductInput,
+  ProductListItem,
+  ProductQuery,
+} from '@oenpc-web/shared'
+import { toJsonColumn } from '../../db/dialect.js'
 import type { ProductRepository } from './port.js'
 import {
+  toAdminSummary,
   toProduct,
   toProductListItem,
   type ProductRow,
@@ -256,5 +266,188 @@ export function createSqliteProductRepository(db: DatabaseSync): ProductReposito
         [locale],
       )
     },
+
+    listForAdmin(page, pageSize) {
+      const safePage = Math.max(1, Math.trunc(page))
+      const safeSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(pageSize)))
+      const offset = (safePage - 1) * safeSize
+
+      const totalRow = queryOne<{ total: number }>(db, 'SELECT COUNT(*) AS total FROM product')
+      const rows = queryAll<ProductAdminRow>(
+        db,
+        `SELECT id, category_id, cover_media_id, published, sort_order, updated_at
+         FROM product
+         ORDER BY updated_at DESC, id DESC
+         LIMIT ? OFFSET ?`,
+        [safeSize, offset],
+      )
+
+      const ids = rows.map((row) => row.id)
+      const translations = fetchTranslations(db, ids)
+
+      return {
+        items: rows.map((row) => toAdminSummary(row, translations.get(row.id) ?? [])),
+        total: totalRow?.total ?? 0,
+        page: safePage,
+        pageSize: safeSize,
+      }
+    },
+
+    create(input, id, now) {
+      db.exec('BEGIN')
+      try {
+        const conflict = findSlugConflict(db, input, null)
+        if (conflict) {
+          db.exec('ROLLBACK')
+          return { conflict }
+        }
+
+        db.prepare(
+          `INSERT INTO product (id, category_id, cover_media_id, published, sort_order, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).run(id, input.categoryId, input.coverMediaId, input.published ? 1 : 0, input.sortOrder, now, now)
+
+        writeChildren(db, id, input)
+        db.exec('COMMIT')
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
+
+      const created = this.getById(id)
+      if (!created) throw new Error(`创建产品后读不回来：${id}`)
+      return created
+    },
+
+    update(id, input, now) {
+      const existing = queryOne<ProductRow>(db, 'SELECT * FROM product WHERE id = ?', [id])
+      if (!existing) return null
+
+      db.exec('BEGIN')
+      try {
+        const conflict = findSlugConflict(db, input, id)
+        if (conflict) {
+          db.exec('ROLLBACK')
+          return { conflict }
+        }
+
+        db.prepare(
+          `UPDATE product
+           SET category_id = ?, cover_media_id = ?, published = ?, sort_order = ?, updated_at = ?
+           WHERE id = ?`,
+        ).run(input.categoryId, input.coverMediaId, input.published ? 1 : 0, input.sortOrder, now, id)
+
+        /*
+         * 整份替换：先删子行再重建。语义见契约里的 ProductInput 说明 ——
+         * "提交什么就是什么"，避免逐字段 PATCH 的 undefined/null 歧义。
+         * 全部 DELETE 都在同一事务里，中途失败整体回滚。
+         */
+        db.prepare('DELETE FROM product_translation WHERE product_id = ?').run(id)
+        db.prepare('DELETE FROM product_spec WHERE product_id = ?').run(id)
+        db.prepare('DELETE FROM product_media WHERE product_id = ?').run(id)
+        db.prepare('DELETE FROM purchase_channel WHERE product_id = ?').run(id)
+
+        writeChildren(db, id, input)
+        db.exec('COMMIT')
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
+
+      return this.getById(id)
+    },
+
+    setPublished(id, published, now) {
+      const result = db
+        .prepare('UPDATE product SET published = ?, updated_at = ? WHERE id = ?')
+        .run(published ? 1 : 0, now, id)
+      return Number((result as { changes?: number | bigint }).changes ?? 0) > 0
+    },
+
+    remove(id) {
+      const result = db.prepare('DELETE FROM product WHERE id = ?').run(id)
+      return Number((result as { changes?: number | bigint }).changes ?? 0) > 0
+    },
+  }
+}
+
+/* ───────────────────── 写入辅助（模块私有） ───────────────────── */
+
+interface ProductAdminRow {
+  id: string
+  category_id: string | null
+  cover_media_id: string | null
+  published: number
+  sort_order: number
+  updated_at: string
+}
+
+/**
+ * 找出与本次提交冲突的 slug；无冲突返回 `null`。
+ *
+ * **必须与写入处在同一个事务内**（调用方已 BEGIN）。分开做的话，两个并发请求
+ * 可以同时通过检查然后都写进去 —— 而按语种唯一的索引会让第二个请求
+ * 以一个跟"slug 重复"毫无关系的数据库错误失败，排查方向完全错。
+ */
+function findSlugConflict(
+  db: DatabaseSync,
+  input: ProductInput,
+  exceptProductId: string | null,
+): string | null {
+  for (const [locale, translation] of Object.entries(input.translations)) {
+    if (!translation) continue
+    const row = queryOne<{ product_id: string }>(
+      db,
+      `SELECT product_id FROM product_translation
+       WHERE locale = ? AND slug = ? AND product_id != ?`,
+      [locale, translation.slug, exceptProductId ?? ''],
+    )
+    if (row) {
+      return `slug "${translation.slug}" 在语种 ${locale} 下已被产品 ${row.product_id} 占用`
+    }
+  }
+  return null
+}
+
+/** 写入产品的全部子行。调用方负责事务边界。 */
+function writeChildren(db: DatabaseSync, productId: string, input: ProductInput): void {
+  for (const [locale, translation] of Object.entries(input.translations)) {
+    if (!translation) continue
+    db.prepare(
+      `INSERT INTO product_translation (product_id, locale, slug, name, summary, description)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(productId, locale, translation.slug, translation.name, translation.summary, translation.description)
+  }
+
+  input.specs.forEach((spec, index) => {
+    db.prepare('INSERT INTO product_spec (product_id, position, key_json, value_json) VALUES (?, ?, ?, ?)').run(
+      productId,
+      index,
+      toJsonColumn(spec.key),
+      toJsonColumn(spec.value),
+    )
+  })
+
+  input.mediaIds.forEach((mediaId, index) => {
+    db.prepare('INSERT INTO product_media (product_id, media_id, position) VALUES (?, ?, ?)').run(
+      productId,
+      mediaId,
+      index,
+    )
+  })
+
+  for (const channel of input.channels) {
+    db.prepare(
+      `INSERT INTO purchase_channel (id, product_id, platform, url, label_json, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      /* 渠道行 id 在这里生成：它没有对外语义，调用方不该操心 */
+      randomUUID(),
+      productId,
+      channel.platform,
+      channel.url,
+      channel.label ? toJsonColumn(channel.label) : null,
+      channel.sortOrder,
+    )
   }
 }

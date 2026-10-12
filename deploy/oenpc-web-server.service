@@ -1,0 +1,59 @@
+# OENPC-WEB 应用服务（B 机 systemd 单元）
+#
+# 安装：
+#   sudo cp deploy/oenpc-web-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now oenpc-web-server
+#
+# 查看日志：
+#   sudo journalctl -u oenpc-web-server -f
+
+[Unit]
+Description=OENPC-WEB 应用服务（Fastify）
+Documentation=file:/opt/oenpc-web/server/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=oenpc-web
+Group=oenpc-web
+
+# ★ WorkingDirectory 决定了**相对路径的解析基准**。
+#   数据库与媒体目录的默认值都是相对的（data/...），所以这里必须是 server 目录 ——
+#   改了它会让服务换一个库启动，而症状是"数据全没了"（其实只是换了个文件）。
+WorkingDirectory=/opt/oenpc-web/server
+
+# 配置从文件读，不要把密钥写进本单元（单元文件常被复制、常进版本库）
+EnvironmentFile=/opt/oenpc-web/server/.env
+Environment=NODE_ENV=production
+
+ExecStart=/usr/bin/node dist/index.js
+
+# ★ 必须处理 SIGTERM（dist/index.js 里已实现）：
+#   直接 SIGKILL 会在 SQLite 留下 -wal 文件，并让 A 机 nginx 把连接断成 502。
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+Restart=always
+RestartSec=3
+
+# ── 基础加固 ──
+# 这些选项不影响功能，但能限制被攻破后的影响面。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+# ProtectSystem=strict 会把整个文件系统挂成只读，所以要显式放开数据目录
+ReadWritePaths=/opt/oenpc-web/data
+
+# ── 资源上限 ──
+# SQLite 单机场景下内存通常很低；给一个上限避免异常时的内存暴涨拖垮整机。
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

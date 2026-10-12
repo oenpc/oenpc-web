@@ -634,7 +634,143 @@ tests/[T·SC·7·SEC·S]: F:测试基线（单测 + 端到端回归）|
     ⚠ 两个端到端测试各带一段"起服务+灌数据"，**出现第三个时就该抽 tests/lib/harness.mjs**
 ```
 
-### 2.6 待建（骨架未覆盖的部分）
+### 2.6 后台与运营能力（✅ 本轮落地 —— 登录 / 产品管理 / 图片上传）
+
+```
+packages/shared/src/contract/auth.ts[K·AU·8·SEC·S]: F:后台账号契约 |
+  R:permissions.ts | A:AdminUser,LoginInput,LoginResult |
+  S:★ 这里**绝不能**出现 password_hash / salt —— 契约是前后端共享的，
+    一旦定义，某个接口迟早会把它序列化出去，而那是一次不会有测试失败的静默泄露；
+    凭据材料只存在于 repositories/auth/port.ts 的 AuthUserRecord 里
+
+packages/shared/src/contract/media.ts[K·MD·7··S]: F:媒体契约 |
+  R:contract/products.ts | A:MediaAsset |
+  S:★ `url` 是**相对路径**（`/media/<id>`）而不是绝对地址：站点与 API 同源反代，
+    两种环境都对；若返回绝对 URL 就得把域名写进库，换域名时历史图片地址全部失效
+
+> `contract/products.ts` 的条目在 §2.2（本轮为它补了 `coverMediaId`，见该条目的说明）。
+
+apps/server/src/core/[C·AU·8·SEC·S]: F:安全与请求上下文（口令 / 令牌 / 限流 / 认证守卫）|
+  R:services/auth/service.ts,db/migrations.ts | A:hashPassword,verifyPassword,createSessionToken,createLoginRateLimiter,requireAdmin |
+  S:★ **目录条目**（覆盖 passwords / tokens / rate-limit / auth-context；errors.ts 有条目）；
+    用 **scrypt + timingSafeEqual**，口令先做 NFKC 归一（全角/半角不同码位会让"输对了登不上"）；
+    用户不存在时**照样跑一次 scrypt**，否则响应时间会暴露用户名是否存在；
+    ★ **会话表而不是 JWT**：JWT 无法注销，而"退出登录要真的失效"是后台的硬要求，
+    还省掉签名密钥的生成/保管/轮换；令牌**只存 sha256**，库泄露也拿不到可用令牌；
+    ★ 登录限流是**内存实现**：进程重启即清零、多实例不共享（单机够用，扩展时必须换共享存储）；
+    限流键是 `IP+用户名` —— 只按 IP 会连坐同一出口的整个办公室，只按用户名则挡不住撒网
+
+apps/server/src/repositories/auth/[D·AU·9·SQL,SEC·M]: F:账号与会话仓储（port + sqlite）|
+  R:core/passwords.ts,core/tokens.ts | A:AuthRepository,createSqliteAuthRepository |
+  S:★ **目录条目**；`username` 的 UNIQUE 交给数据库而不是应用层"先查再插" ——
+    并发时后者会漏，而漏的症状是"登录匹配到哪一条全靠运气"；
+    权限点解析时**丢弃枚举外的值**（库里的废弃权限点既不该出现在勾选界面，更不该放行）；
+    SQLite 的 INTEGER 0/1 → boolean 的转换收口在 toRecord
+
+apps/server/src/repositories/audit/[D·AL·8·SQL·S]: F:审计仓储（port + sqlite）|
+  R:db/migrations.ts | A:AuditRepository,createSqliteAuditRepository |
+  S:★ **「只追加」写在类型里**：端口只有 append / recent，没有 update / delete ——
+    于是 `append-only-audit` 约束不必靠检查器扫"有没有人写了 UPDATE"，调用方根本拿不到那个能力。
+    "让错误不可能发生"优于"让错误被发现"；
+    actor_id **故意不加外键**：用户删除后审计必须留存，否则"谁删的"会随用户一起消失；
+    审计写失败只记日志、不让业务失败（需要强一致时两者应同事务 —— 见文件头取舍）
+
+apps/server/src/repositories/media/[D·MD·8·SQL,PG·S]: F:媒体仓储（port + sqlite）|
+  R:db/migrations.ts | A:MediaRepository,createSqliteMediaRepository |
+  S:★ 磁盘文件名按 `<id><扩展名>` 由 **mime 反查**得出，**没有 stored_name 列** ——
+    映射表稳定（image/jpeg→.jpg 不会变），所以可确定性重建；
+    原始文件名只存库用于展示，**永不参与路径拼装**（目录穿越的经典入口）；
+    countReferences 把封面引用与图集引用**分别数再相加**，用 UNION 会丢掉这个区分；
+    ⚠ 本域 SQL 与 PG 的差异：SQLite 用 INTEGER 存布尔、PG 用真 boolean
+
+apps/server/src/services/auth/service.ts[S·AU·9·SEC·M]: F:认证服务（登录 / 会话 / 权限断言）|
+  R:core/passwords.ts,core/tokens.ts,core/rate-limit.ts,repositories/auth/port.ts | A:createAuthService,toAdminUser,assertPermission |
+  S:★ 登录失败**三种原因返回同一个错误**（用户不存在 / 口令错 / 已停用），
+    区分开就等于送攻击者一个用户名枚举接口；真实原因只写进审计；
+    ★ 过期判定**只在这一处** —— 分散判过期最常见的后果是某个入口忘了判；
+    账号停用后立刻清掉其手上未过期的会话；
+    `isOwner` 隐式全权直接放行，不看 permissions 列表（否则每加一个权限点都要回头补超管）
+
+apps/server/src/services/media/service.ts[S·MD·8·SEC·S]: F:媒体服务（校验 / 落盘 / 引用保护）|
+  R:repositories/media/port.ts,db/dialect.ts | A:createMediaService,MAX_UPLOAD_BYTES |
+  S:★ mime 白名单**不含 SVG** —— SVG 可内嵌脚本，同源提供就是存储型 XSS 的载体，
+    而这是"上传图片"最容易漏的一条；
+    ★ 先落盘再写库，写库失败则删掉已落盘文件（否则积攒无主文件）；
+    ★ 删除前查引用计数，有引用返回 409 —— 否则前台产品页出现破图，
+    看起来像"图片丢了"而不像"有人在媒体库删了东西"；
+    ⚠ 已知缺口：不压缩、不生成缩略图、width/height 恒为 null（需图像库）
+
+apps/server/src/services/products/admin.ts[S·PD·9·SEC·M]: F:产品的后台服务（校验 / 写入 / 审计）|
+  R:services/products/service.ts,repositories/products/port.ts,repositories/audit/port.ts | A:createProductAdminService,validateProductInput |
+  S:★ 与 service.ts（公开读路径）**分开**：两者的访问策略正好相反，混在一起最容易
+    发生"某天公开接口复用了后台的某个函数"；
+    ★ slug 冲突检查**与写入同事务** —— 分开做则两个并发请求都能通过检查，
+    而按语种唯一的索引会让第二个以一个跟"slug 重复"毫无关系的数据库错误失败；
+    slug 限制为小写/数字/连字符：它会直接进 URL，含中文的 slug 会被编码成不可读形式；
+    媒体存在性靠**注入的 mediaExists** 而不是直接依赖媒体仓储，避免 PD 与 MD 互相耦合
+
+apps/server/src/routes/auth.ts[R·AU·8·SEC·S]: F:认证路由（登录 / 登出 / 当前用户）|
+  R:services/auth/service.ts,core/auth-context.ts | A:registerAuthRoutes |
+  S:限流触发返回 **429 而不是 401** —— 否则前端显示"口令错误"，
+    用户会继续改口令重试，把锁定期一次次刷新；
+    登出**幂等**：令牌本来就无效也返回成功（前端的期望是"我登出了"）；
+    `request.ip` 的取值取决于 trustProxy，没配反向代理时会拿到 A 机 IP 并让限流退化成"限流全站"
+
+apps/server/src/routes/media.ts[R·MD·8·SEC,PERF·S]: F:公开媒体服务（GET /media/:id）|
+  R:services/media/service.ts | A:registerPublicMediaRoutes |
+  S:★ 由应用按 id 提供而不是让 nginx 读磁盘：nginx 在 A 机、文件在 B 机；
+    且按 id 提供为将来的访问控制留了口子；
+    `Cache-Control: immutable` 是**安全的**，因为每次上传都生成新 id（id 与内容一一对应）——
+    ⚠ 若将来允许"替换某个 id 的文件内容"，这条缓存策略必须同时改掉，否则用户永远看到旧图；
+    带 X-Content-Type-Options: nosniff；库里有记录但磁盘无文件时返回 404 而非 500
+
+apps/server/src/routes/admin/[R·PD·8·SEC·M]: F:后台路由（产品 + 媒体管理）|
+  R:core/auth-context.ts,services/products/admin.ts,services/media/service.ts | A:registerAdminProductRoutes,registerAdminMediaRoutes |
+  S:★ **目录条目**（覆盖 products.ts 与 media.ts，两者同属后台管理面）；
+    权限点分开（product:read/write/publish、media:read/write/delete），
+    不共用一个"管理员"开关 —— 否则"能改文案但不能上架"这种真实需求无法表达；
+    ★ 上传用**裸请求体**而不是 multipart：单文件不需要它，且避开了部件顺序、
+    limits 配置、首部文件名转义等一批已知陷阱；类型白名单在 app.ts 的
+    addContentTypeParser 与 media 服务里**各拦一次**（只拦一处时，改错任一处都会让另一处形同虚设）；
+    ★ 路由泛型必须写在方法上（`app.get<{...}>()`）：写在 handler 参数上 TS 无法反推，
+    会报 "RouteGenericInterface 不可赋值"
+
+apps/admin/[X·AU·7·SEC,I18N·M]: F:后台 SPA（登录 / 产品列表 / 产品编辑 / 图片上传）|
+  R:apps/server/src/routes/admin/,packages/shared/src/contract/ | A:- |
+  S:★ **目录条目**，覆盖全部后台源码（含 vite.config.ts —— 它的坐标本该是 E·CO，
+    但目录条目只能填一个坐标，这里取 UI 面；需要按文件分域约束时应改为逐文件条目）；
+    ★ `vite.config.ts` 的 `base: '/admin/'` 必须与 nginx 的 location 三者一致 ——
+    不一致时资源请求落到前台站点，浏览器报 `Unexpected token '<'`（把 HTML 当 JS 解析），
+    极易被误判成"构建坏了"；
+    ★ `api.ts` 是唯一发请求的地方：解信封、错误码→文案、401 自动清会话并跳登录；
+    ★ `session.ts` 用 localStorage 存令牌（Bearer 头天然免疫 CSRF），
+    代价是 XSS 可窃取 —— 缓解措施是不用 SVG 上传白名单 + Vue 默认转义 + nosniff，
+    要更强需改 HttpOnly Cookie + CSRF token；
+    ★ `product-form.ts` 承担 Product（读）↔ ProductInput（写）的转换：
+    两种形状不同，直接回传读到的对象会静默清空翻译字段；
+    ★ 语言切换/列表显式标出"缺哪个语种"：只看一种语言时最容易"英文录了中文忘了"
+
+scripts/create-admin.mjs[T·SC·8·SEC·S]: F:创建或重置后台管理员 |
+  R:apps/server/dist/core/passwords.ts,apps/server/dist/db/migrations.js | A:- |
+  S:★ **不预置默认账号**：`admin/admin123` 那种做法等于给每个忘了改口令的部署留一个公开后门，
+    而"忘了改"是常态；显式跑一条命令换来"不存在默认凭据"这个性质；
+    复用 dist 里的 scrypt 实现而不是自己再写一遍 —— 摘要算法分叉的症状是
+    "用这个脚本建的口令登不进去"，而排查会一路查到登录逻辑；
+    ★ 第一个账号强制全权（否则没人能再授权，系统锁死）；
+    ★ 重置口令时**必须清掉该用户全部会话** —— 用户改口令的动机往往正是"怀疑令牌泄露了"；
+    需要先 `pnpm build`
+
+docs/部署说明.md[T·SC·8·SEC·M]: F:部署说明（Linux + nginx + systemd）|
+  R:deploy/nginx.conf,deploy/oenpc-web-server.service,.env.example | A:- |
+  S:★ 顺序有硬要求：前台是 SSG，**构建期从 API 拉数据**，所以必须"先起后端 → 录内容 → 再 build:web"；
+    §0 的前置检查（Node ≥ 22.19）必须先做，否则白折腾；
+    §9 备份必须**库与媒体一起备**（库里存媒体 id，只恢复一个会得到一堆破图），
+    且要用 sqlite3 的 .backup 而不是直接 cp（复制正在写的库会得到损坏文件）；
+    §10 升级的 rsync 必须 --exclude data --exclude .env，漏了会覆盖数据库与配置；
+    末尾列了本轮**没做**的部分，避免把功能清单里的 ✅（需求已确认）误读成"已实现"
+```
+
+### 2.7 待建（骨架未覆盖的部分）
 
 > 这些面目前还没有条目 —— **新文件落在已有面上时不需要新约束**（锚定的收益），
 > 只有出现**新的面**时才需要新增规则。

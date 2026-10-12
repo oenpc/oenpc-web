@@ -25,6 +25,7 @@
  */
 
 import type {
+  AdminProductSummary,
   LocaleCode,
   LocalizedText,
   Product,
@@ -146,6 +147,7 @@ export function toProduct(
     summary: collectLocalized(translations, (t) => t.summary),
     description: collectLocalized(translations, (t) => t.description),
     categoryId: row.category_id,
+    coverMediaId: row.cover_media_id,
     specs: [...specs]
       .sort((a, b) => a.position - b.position)
       .map((spec) => ({
@@ -157,6 +159,36 @@ export function toProduct(
     published: toBoolean(row.published),
     sortOrder: row.sort_order,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+/**
+ * 后台列表行的形状。**与 `ProductRow` 不同**：不含 `created_at`，
+ * 但需要 `updated_at`（后台按"最近改过"排序，且要显示给运营者看）。
+ */
+export interface AdminProductRow {
+  id: string
+  category_id: string | null
+  cover_media_id: string | null
+  published: number
+  sort_order: number
+  updated_at: string
+}
+
+/** 后台列表项。**含 `published`** —— 这正是它不能复用 `ProductListItem` 的原因。 */
+export function toAdminSummary(
+  row: AdminProductRow,
+  translations: readonly ProductTranslationRow[],
+): AdminProductSummary {
+  return {
+    id: row.id,
+    slug: collectLocalized(translations, (t) => t.slug),
+    name: collectLocalized(translations, (t) => t.name),
+    published: toBoolean(row.published),
+    categoryId: row.category_id,
+    coverMediaId: row.cover_media_id,
+    sortOrder: row.sort_order,
     updatedAt: row.updated_at,
   }
 }

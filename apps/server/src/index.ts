@@ -18,6 +18,9 @@ import { buildApp } from './app.js'
 import { loadConfig } from './config.js'
 import { openDatabase } from './db/connection.js'
 import { migrate } from './db/migrations.js'
+import { createSqliteAuditRepository } from './repositories/audit/sqlite.js'
+import { createSqliteAuthRepository } from './repositories/auth/sqlite.js'
+import { createSqliteMediaRepository } from './repositories/media/sqlite.js'
 import { createSqliteProductRepository } from './repositories/products/sqlite.js'
 
 async function main(): Promise<void> {
@@ -27,15 +30,21 @@ async function main(): Promise<void> {
   const opened = openDatabase(config.dbPath)
   const migration = migrate(opened.db)
 
-  const app = buildApp({
+  /* 每个域一个仓储。所有仓储共享同一个连接 —— SQLite 单写事务，多连接没有收益。 */
+  const repositories = {
+    products: createSqliteProductRepository(opened.db),
+    auth: createSqliteAuthRepository(opened.db),
+    audit: createSqliteAuditRepository(opened.db),
+    media: createSqliteMediaRepository(opened.db),
+  }
+
+  const { app, services } = buildApp({
     config,
     /*
-     * 装配点只有这一处。换 PostgreSQL 时，这里把 createSqliteProductRepository
-     * 换成 createPostgresProductRepository 即可 —— 服务层与路由层都不用动。
+     * 装配点只有这一处。换 PostgreSQL 时，把上面四个 createSqlite* 换成
+     * createPostgres* 即可 —— 服务层与路由层都不用动。
      */
-    repositories: {
-      products: createSqliteProductRepository(opened.db),
-    },
+    repositories,
     databasePath: opened.path,
     appliedMigrations: migration.applied.length,
     startedAtMs,
@@ -45,6 +54,19 @@ async function main(): Promise<void> {
     app.log.info({ applied: migration.applied }, '数据库迁移已应用')
   } else {
     app.log.info({ migrations: migration.skipped }, '数据库结构已是最新')
+  }
+
+  /* 启动时清一次过期会话，避免会话表随重启次数无限增长 */
+  const purged = services.auth.purgeExpiredSessions()
+  if (purged > 0) app.log.info({ purged }, '已清理过期会话')
+
+  if (repositories.auth.countUsers() === 0) {
+    /*
+     * 没有任何账号时明确提示怎么建第一个管理员 ——
+     * 否则部署完打开后台只会看到一个登不进去的登录页，
+     * 而原因（库里没有账号）在浏览器侧完全看不出来。
+     */
+    app.log.warn('数据库中还没有任何后台账号。请先运行：node scripts/create-admin.mjs <用户名> <口令>')
   }
 
   let shuttingDown = false

@@ -24,9 +24,19 @@
  * （见 `mapper.ts`）。
  */
 
-import type { LocaleCode, Page, Product, ProductListItem, ProductQuery } from '@oenpc-web/shared'
+import type {
+  AdminProductSummary,
+  LocaleCode,
+  Page,
+  Product,
+  ProductInput,
+  ProductListItem,
+  ProductQuery,
+} from '@oenpc-web/shared'
 
 export interface ProductRepository {
+  /* ── 公开读取 ── */
+
   /** 分页查询。`query.publishedOnly` 由调用方（服务层）决定，仓储只忠实执行。 */
   list(query: ProductQuery): Page<ProductListItem>
 
@@ -40,4 +50,33 @@ export interface ProductRepository {
    * **每个受支持语种**各调一次。
    */
   listPublishedSlugs(locale: LocaleCode): Array<{ id: string; slug: string }>
+
+  /* ── 后台写入 ── */
+
+  /**
+   * 后台列表：**包含未上架**，并按最近修改排序。
+   *
+   * 与公开 `list()` 分开是刻意的：公开列表强制 `publishedOnly`，
+   * 后台要的是相反的东西。合成一个函数、靠入参区分，
+   * 就等于让访问策略**由调用方决定** —— 那么某天前端加个参数就能把未上架产品露出去。
+   */
+  listForAdmin(page: number, pageSize: number): Page<AdminProductSummary>
+
+  /**
+   * 新建产品（含翻译、规格、图集、渠道）。
+   *
+   * **在同一次事务里**完成 slug 冲突检查与写入 —— 分开做的话，
+   * 两个并发请求可以同时通过检查然后都写进去，而 slug 的按语种唯一索引
+   * 会让第二个请求以一个面目全非的数据库错误失败。
+   */
+  create(input: ProductInput, id: string, now: string): Product | { conflict: string }
+
+  /** 整份替换式更新。返回 `null` = 产品不存在。 */
+  update(id: string, input: ProductInput, now: string): Product | null | { conflict: string }
+
+  /** 上下架。返回 `false` = 产品不存在。 */
+  setPublished(id: string, published: boolean, now: string): boolean
+
+  /** 删除产品。子表靠外键 `ON DELETE CASCADE` 一并清理（依赖 `PRAGMA foreign_keys = ON`）。 */
+  remove(id: string): boolean
 }

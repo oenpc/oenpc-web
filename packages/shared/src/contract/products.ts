@@ -20,7 +20,7 @@
  */
 
 import type { LocaleCode, LocalizedText } from '../locales.js'
-import type { PurchaseChannelLink } from './channels.js'
+import type { PurchaseChannelLink, PurchasePlatform } from './channels.js'
 
 /** 产品分类：多级树，`parentId` 为空表示顶层。 */
 export interface ProductCategory {
@@ -54,6 +54,15 @@ export interface Product {
   /** 详情页正文。 */
   description: LocalizedText
   categoryId: string | null
+  /**
+   * 封面图。
+   *
+   * ⚠ 这个字段曾经**漏在契约里**（表里有、`toProduct` 没映射），
+   * 后果是后台编辑页读不到当前封面，而更新是整份替换 ——
+   * **保存一次就把封面清空了**，且页面不会有任何报错。
+   * 这类"读形状漏字段 + 全量写"的组合是静默数据丢失的典型来源。
+   */
+  coverMediaId: string | null
   specs: ProductSpec[]
   /** 媒体库 id，顺序即前台展示顺序。 */
   mediaIds: string[]
@@ -94,4 +103,64 @@ export interface ProductQuery {
   locale: LocaleCode
   page?: number
   pageSize?: number
+}
+
+/* ───────────────────────── 后台写入契约 ───────────────────────── */
+
+/** 单个语种的可填内容。**缺哪个语种就是没有那个语种的版本**，不做回落。 */
+export interface ProductTranslationInput {
+  slug: string
+  name: string
+  summary: string
+  description: string
+}
+
+export interface PurchaseChannelInput {
+  platform: PurchasePlatform
+  url: string
+  label?: LocalizedText
+  sortOrder: number
+}
+
+/**
+ * 后台提交的产品内容。
+ *
+ * ## 为什么是**整份替换**而不是逐字段 PATCH
+ *
+ * 产品编辑页一次提交整张表单。逐字段 PATCH 需要为每个字段区分"未提供"与
+ * "显式置空"（JSON 里 `undefined` 与 `null` 的语义混淆是经典 bug 源），
+ * 而整份替换的语义只有一条：**提交什么就是什么**。
+ * 代价是并发编辑会互相覆盖 —— 单机后台、几个人用，这个代价可接受；
+ * 需要时再加乐观锁（比对 `updatedAt`）。
+ *
+ * `translations` 里**至少要有一种语种**，且该语种的 `slug`/`name` 非空，
+ * 否则会产出一个前台无法访问、也无法被索引的空产品 —— 由服务层校验。
+ */
+export interface ProductInput {
+  translations: Partial<Record<LocaleCode, ProductTranslationInput>>
+  categoryId: string | null
+  coverMediaId: string | null
+  mediaIds: string[]
+  specs: ProductSpec[]
+  channels: PurchaseChannelInput[]
+  published: boolean
+  sortOrder: number
+}
+
+/**
+ * 后台列表用的精简外形。
+ *
+ * **故意不复用 `ProductListItem`**：后者面向公开接口，不含 `published`
+ * 与 `updatedAt`，而这两项正是后台列表最需要的（哪些没上架、哪些刚改过）。
+ * 把后台字段塞进公开契约，公开接口迟早会把它们漏出去。
+ */
+export interface AdminProductSummary {
+  id: string
+  slug: LocalizedText
+  name: LocalizedText
+  published: boolean
+  categoryId: string | null
+  coverMediaId: string | null
+  sortOrder: number
+  updatedAt: string
 }

@@ -760,14 +760,22 @@ scripts/create-admin.mjs[T·SC·8·SEC·S]: F:创建或重置后台管理员 |
     ★ 重置口令时**必须清掉该用户全部会话** —— 用户改口令的动机往往正是"怀疑令牌泄露了"；
     需要先 `pnpm build`
 
-docs/部署说明.md[T·SC·8·SEC·M]: F:部署说明（Linux + nginx + systemd）|
-  R:deploy/nginx.conf,deploy/oenpc-web-server.service,.env.example | A:- |
-  S:★ 顺序有硬要求：前台是 SSG，**构建期从 API 拉数据**，所以必须"先起后端 → 录内容 → 再 build:web"；
-    §0 的前置检查（Node ≥ 22.19）必须先做，否则白折腾；
-    §9 备份必须**库与媒体一起备**（库里存媒体 id，只恢复一个会得到一堆破图），
-    且要用 sqlite3 的 .backup 而不是直接 cp（复制正在写的库会得到损坏文件）；
-    §10 升级的 rsync 必须 --exclude data --exclude .env，漏了会覆盖数据库与配置；
-    末尾列了本轮**没做**的部分，避免把功能清单里的 ✅（需求已确认）误读成"已实现"
+docs/部署说明.md[T·SC·8·SEC·M]: F:部署说明（两台内网机器：A 172.19.3.47 / B 172.19.229.191）|
+  R:deploy/nginx.conf,deploy/env.production.example,deploy/oenpc-web-server.service | A:- |
+  S:★ **`OENPC_WEB_HOST` 必须填 B 机的内网地址，不能是 `127.0.0.1`** ——
+    A 机是另一台主机，连不上 B 的回环地址。这条已实测：绑到具体地址后，
+    同一进程从 `127.0.0.1` 访问**连不上**（不是"可能有问题"，是必然）；
+    填错时的症状是"本机 curl 正常、A 机一律 502"，而 502 通常被误判成"应用挂了"；
+    ★ 连带后果：因为服务不在回环上，**在 B 机上自检与构建前台都要用内网地址**
+    （`OENPC_WEB_API_BASE=http://172.19.229.191:3900`）；
+    ★ 源码与构建都在 B 机（A 机只需 nginx），产物再 rsync 到 A；
+    ★ 顺序有硬要求：前台是 SSG，**先起后端 → 录内容 → 再 build:web**；
+    ★ `SITE_URL` 是**构建期烧进 HTML** 的（canonical/hreflang/sitemap 都用它生成绝对地址）——
+    绑域名时只改 .env 与 nginx 而不重建，页面仍指向旧地址且不报错，会被判重复内容；
+    §9 说明当前是**内网明文 HTTP**，口令与令牌在 A→B 之间明文传输，不可映射公网；
+    §10 备份必须**库与媒体一起备**且用 sqlite3 的 .backup（直接 cp 正在写的库会损坏）；
+    §11 升级 rsync 必须 --exclude data --exclude .env，漏了覆盖数据库与配置；
+    末尾列了本轮**没做**的部分，避免把功能清单的 ✅（需求已确认）误读成"已实现"
 ```
 
 ### 2.7 待建（骨架未覆盖的部分）

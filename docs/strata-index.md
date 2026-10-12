@@ -750,15 +750,34 @@ apps/admin/[X·AU·7·SEC,I18N·M]: F:后台 SPA（登录 / 产品列表 / 产�
     两种形状不同，直接回传读到的对象会静默清空翻译字段；
     ★ 语言切换/列表显式标出"缺哪个语种"：只看一种语言时最容易"英文录了中文忘了"
 
-scripts/create-admin.mjs[T·SC·8·SEC·S]: F:创建或重置后台管理员 |
-  R:apps/server/dist/core/passwords.ts,apps/server/dist/db/migrations.js | A:- |
-  S:★ **不预置默认账号**：`admin/admin123` 那种做法等于给每个忘了改口令的部署留一个公开后门，
-    而"忘了改"是常态；显式跑一条命令换来"不存在默认凭据"这个性质；
-    复用 dist 里的 scrypt 实现而不是自己再写一遍 —— 摘要算法分叉的症状是
-    "用这个脚本建的口令登不进去"，而排查会一路查到登录逻辑；
-    ★ 第一个账号强制全权（否则没人能再授权，系统锁死）；
-    ★ 重置口令时**必须清掉该用户全部会话** —— 用户改口令的动机往往正是"怀疑令牌泄露了"；
-    需要先 `pnpm build`
+apps/server/src/cli/create-admin.ts[T·AU·8·SEC·S]: F:建/重置后台管理员（编译进 dist/cli/，发布包可用）|
+  R:core/passwords.ts,db/migrations.ts,db/dialect.ts | A:- |
+  S:★ 放在 **server 包内**而不是仓库根的 scripts/ —— 根脚本用相对路径
+    import `apps/server/dist/...`，**只在仓库布局下成立**；发布包里只有 dist/，那个路径不存在。
+    放进 dist 后，仓库布局与发布布局用同一份实现，不存在两处逻辑漂移；
+    ★ **不预置默认账号**（`admin/admin123` 等于给每个忘了改口令的部署留后门，而"忘了改"是常态）；
+    第一个账号强制全权（否则没人能再授权，系统锁死）；
+    ★ 重置口令时**必须清掉该账号全部会话** —— 用户改口令的动机往往正是"怀疑令牌泄露了"；
+    直接跑迁移，允许在服务首次启动前就把账号建好
+
+scripts/release.mjs[T·SC·9·SEC·M]: F:生产发布打包（本机构建 → 自包含产物 → 上传）|
+  R:apps/server/package.json,packages/shared/package.json,deploy/ | A:- |
+  S:★ 存在的理由：本机 `node_modules` **不能**传到 Linux ——
+    pnpm 子包 node_modules 里全是符号链接，真包在根 .pnpm；且 Windows 的链接是绝对路径，换机即断。
+    所以装配出**不依赖 pnpm 布局**的产物：server/dist + 把 shared 的 dist 当本地包
+    （`file:./shared`），服务器上 `npm install --omit=dev`（fastify 是纯 JS，无需编译）；
+    ★ `packages/shared` 必须随包 —— 编译产物**运行时确实 import 它**（grep 确认 4 处）；
+    ★ `API_BASE` 必须指向**目标环境的** API：指向本机开发服务的话，
+    静态页里是本地产品，传到服务器后内容与库对不上**且不报错**；
+    ★ 禁止名单**只放"任何位置都不可能合法"的名字**，不能按 `data` 这类通用名排除 ——
+    服务端 dist 里有合法的 `dist/data/` 模块目录，按名排除会直接打坏包（家族事故教训）；
+    跳过闸门用 --skip-gates（不推荐，仅紧急热修）
+
+scripts/create-admin.mjs[T·SC·5·SEC·S]: F:仓库布局下的建管理员包装 |
+  R:apps/server/src/cli/create-admin.ts | A:- |
+  S:★ **薄包装，不含实现** —— 口令摘要算法只应该有一处代码，
+    两处分叉的症状是"用某个入口建的账号登不进去"，而排查会一路查到登录逻辑；
+    找不到 dist 时明确提示"先 pnpm build"并给出发布包布局下的替代命令
 
 docs/部署说明.md[T·SC·8·SEC·M]: F:部署说明（两台内网机器：A 172.19.3.47 / B 172.19.229.191）|
   R:deploy/nginx.conf,deploy/env.production.example,deploy/oenpc-web-server.service | A:- |

@@ -149,30 +149,72 @@ fi
 # 中间可能隔着缓存。这里**真的去 A 机取一次**。
 
 say "验证"
+echo "  站点地址 ${SITE_URL}"
 
-REMOTE_URLS=$(curl -fsS --max-time 15 "${SITE_URL}/sitemap.xml" | grep -c '<loc>' || true)
-echo "  A 机 sitemap 页面数: ${REMOTE_URLS}（本地 ${LOCAL_URLS}）"
-if [ "$REMOTE_URLS" != "$LOCAL_URLS" ]; then
-  echo "
-❌ 页面数不一致 —— 同步没生效或 nginx 指错了目录。
+# 取 sitemap：**跟随重定向**并记录最终地址与状态码。
+#
+# 早期版本只用 curl -fS（不跟随重定向），于是当站点是 http→https 跳转时，
+# 拿到的是一个空的 301 响应体 → 页面数记成 0 → 误报"同步没生效"。
+# **A 机上已有 HTTPS 站点时，这种跳转是常态**，所以这个 bug 一定会撞上。
+TMP_SITEMAP=$(mktemp)
+META=$(curl -sSL --max-time 20 -o "$TMP_SITEMAP" -w '%{http_code} %{url_effective}' "${SITE_URL}/sitemap.xml" || echo '000 ?')
+REMOTE_CODE=${META%% *}
+EFFECTIVE_URL=${META#* }
+REMOTE_URLS=$(grep -c '<loc>' "$TMP_SITEMAP" 2>/dev/null || true)
 
-  逐项排查：
-    1. A 机上确认文件到位： ls '${SITE_DIR}'
-    2. nginx 的 root 是否指向它： grep -n 'root ' /etc/nginx/conf.d/oenpc-web.conf
-    3. reload： sudo nginx -t && sudo systemctl reload nginx
-    4. 是否被缓存： curl -fsS -H 'Cache-Control: no-cache' '${SITE_URL}/sitemap.xml' | head" >&2
-  exit 1
+echo "  A 机 sitemap 页面数: ${REMOTE_URLS}（本地 ${LOCAL_URLS}）  HTTP ${REMOTE_CODE}"
+if [ "$EFFECTIVE_URL" != "${SITE_URL}/sitemap.xml" ]; then
+  echo "  实际取到的是: ${EFFECTIVE_URL}"
 fi
 
-# 经 A 机反代的健康检查：验证 nginx 的 /api/ 反代仍然通
-if curl -fsS --max-time 10 "${SITE_URL}/api/health" >/dev/null; then
+if [ "$REMOTE_URLS" != "$LOCAL_URLS" ]; then
+  echo "" >&2
+  echo "❌ 页面数不一致（本地 ${LOCAL_URLS}，A 机 ${REMOTE_URLS}）" >&2
+
+  if [ "$EFFECTIVE_URL" != "${SITE_URL}/sitemap.xml" ]; then
+    echo "
+   请求被重定向到了： ${EFFECTIVE_URL}
+   —— 说明 SITE_URL 与实际访问地址不一致。
+
+   最常见：站点跑在 HTTPS / 域名上，而 SITE_URL 还写着 http://<IP>。
+
+   ★ SITE_URL 是**构建期烧进 HTML** 的（canonical / hreflang / sitemap 都用它生成绝对地址）。
+     填错会让页面里的互指链接**全部指向错地址，而且不报错** ——
+     搜索引擎会把这些页面判为重复内容。
+   修法：改 .publish-site.env 与 B 机 .env 里的 SITE_URL，
+         然后**重新构建并发布**（只改配置不重建是没用的）。" >&2
+
+  elif [ "$REMOTE_CODE" = "404" ]; then
+    echo "
+   HTTP 404 —— 文件没被这个域名的 nginx 找到。
+
+   注意：A 机上已有 HTTPS 站点时，你那个域名的 server 块可能
+   **不是**指向 ${SITE_DIR}。核对：
+     ls -la '${SITE_DIR}/sitemap.xml'
+     sudo nginx -T | grep -nE 'server_name|root '        # 看该域名的 root 到底指哪" >&2
+
+  else
+    echo "
+   HTTP ${REMOTE_CODE}，但页面数与本地对不上 —— 可能同步不完整或被缓存。
+   A 机上核对：
+     ls -la '${SITE_DIR}/'
+     grep -c '<loc>' '${SITE_DIR}/sitemap.xml'           # 应与本地 ${LOCAL_URLS} 相同" >&2
+  fi
+
+  rm -f "$TMP_SITEMAP"
+  exit 1
+fi
+rm -f "$TMP_SITEMAP"
+
+# 经 A 机反代的健康检查（同样跟随重定向）
+if curl -fsSL --max-time 10 "${SITE_URL}/api/health" >/dev/null; then
   echo "  经 A 机反代的 /api/health ✓"
 else
   echo "  ⚠ ${SITE_URL}/api/health 不通 —— 静态页已发布，但接口反代有问题（见 nginx 配置的 /api/ 段）" >&2
 fi
 
 # 抽查首页确实拿得到
-if curl -fsS --max-time 10 "${SITE_URL}/" >/dev/null; then
+if curl -fsSL --max-time 10 "${SITE_URL}/" >/dev/null; then
   echo "  首页可访问 ✓"
 else
   echo "  ⚠ 首页返回异常" >&2

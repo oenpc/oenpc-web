@@ -887,6 +887,7 @@ V/O/X/R/S/D ──► packages/shared   （契约，全层可读）
 | P-20 | **构建期只取一页产品 = 站点静默缺页** | 服务端 `MAX_PAGE_SIZE = 60`。预渲染只取第一页时，产品超过 60 个后**构建照样成功，但站点少了页面** —— 直到有人在搜索里找不到自己的产品 | 预渲染**必须翻页取完**（按 `total` 判断），并在超过页数上限时**中断构建**而不是产出不完整的站点 | 已在 `prerender.mjs` 实现；可加断言"产出页数 == total × 语种数" | [实测] P0.3 |
 | P-21 | **SSR 里的模块级可变状态会跨页面泄漏** | 把站点数据放在模块级 `reactive`/普通变量里 → 同一进程顺序渲染多个页面时，上一个页面的数据串到下一个。症状是"某些页面偶发出现别的产品名"，**极难复现** | 用 `provide`/`inject`（生命周期绑在 app 实例上），或每次渲染新建实例。**禁止模块级可变状态** | 人工评审（不可判定 → exit 2）| [结构] 已在 `site-context.ts` 设计上规避 |
 | P-22 | **测试里手写盘符路径** | 断言 `path.resolve(cwd, …)` 的结果以 `C:/repo` 开头 → **在 Linux 上必然失败**：POSIX 下 `C:/repo` 不是绝对路径，`resolve` 会把它当相对路径拼到 `process.cwd()` 后面 | 测试里的路径一律由 `node:path` / `node:os` 生成（`join(tmpdir(), …)`），**绝不手写盘符或分隔符**；CI 至少要在一个非 Windows 平台跑一次 | 代码评审 + 多平台跑测试 | [实测] 服务器首次 `pnpm test` 撞上 —— 这个测试在本机（Windows）一直是通过的 |
+| P-23 | **部署机上跑 `pnpm install` 会重写 `pnpm-lock.yaml`** | lockfile 被改写后变成"已跟踪文件的本地改动"，下一次 `git pull` 报 `Your local changes to the following files would be overwritten by merge: pnpm-lock.yaml` 而中止。成因是服务器的 pnpm 版本或 registry 与生成 lockfile 的机器不一致 | 部署机上**一律用 `pnpm install --frozen-lockfile`** —— 它不匹配时**报错而不是改写**；lockfile 只在开发机上生成。已撞上时：`git checkout -- pnpm-lock.yaml` 再 pull | 部署文档的安装命令已改为 --frozen-lockfile | [实测] 服务器第二次 git pull 撞上 |
 
 ---
 

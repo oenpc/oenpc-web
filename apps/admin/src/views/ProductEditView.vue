@@ -8,7 +8,6 @@ import {
   type MediaAsset,
   type Product,
   type ProductInput,
-  type PurchasePlatform,
   type PurchaseChannelInput,
 } from '@oenpc-web/shared'
 import { PURCHASE_PLATFORMS } from '@oenpc-web/shared'

@@ -8,5 +8,5 @@
     "verbatimModuleSyntax": true
   },
   /* 只检查 .ts；.vue 的类型检查需要 vue-tsc（见 apps/web/tsconfig.json 的说明） */
-  "include": ["src/**/*.ts", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts"]
 }

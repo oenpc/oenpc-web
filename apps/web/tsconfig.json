@@ -16,5 +16,5 @@
    * 那是 P1 的事 —— 本阶段是 spike，要验证的是预渲染管线，不是 SFC 类型。
    * `src/env.d.ts` 提供 `*.vue` 的模块声明，让 tsc 能解析这些导入。
    */
-  "include": ["src/**/*.ts", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts"]
 }

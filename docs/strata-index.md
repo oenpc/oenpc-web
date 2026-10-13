@@ -775,6 +775,26 @@ apps/server/src/cli/create-admin.ts[T·AU·8·SEC·S]: F:建/重置后台管理�
     ★ 重置口令时**必须清掉该账号全部会话** —— 用户改口令的动机往往正是"怀疑令牌泄露了"；
     直接跑迁移，允许在服务首次启动前就把账号建好
 
+scripts/deploy.sh[T·SC·8·SEC·S]: F:一键拉取并部署（B 机上执行）|
+  R:scripts/publish-site.sh,deploy/oenpc-web-server.service,deploy/env.production.example | A:- |
+  S:★ 设计原则：**先检查、再动手；每步失败就停并说清怎么修** ——
+    部署脚本最糟的形态是"跑到一半失败了、你已经不知道处在什么状态"；
+    ★ 把三个曾真实绊倒过我们的点做成了前置检查，而不是等执行时才炸：
+      ① Node < 22.19（服务端用内置 node:sqlite，低版本直接起不来）
+      ② systemd 单元没装（否则 restart 报 "Unit not found"）
+      ③ **pnpm-lock.yaml 有本地改动挡住 pull**（陷阱 P-23）——
+         它是唯一会被自动还原的文件（只应由开发机生成，在服务器上被 pnpm install 改写总是非本意）；
+         其它已跟踪文件有改动则**一律停下**，那可能意味着有人在服务器上直接改了代码；
+    ★ dubious ownership 只**提示**恢复属主关系（推荐），safe.directory 作为应急 ——
+      前者是修根因，后者只是让 git 闭嘴；
+    ★ 安装一律 `--frozen-lockfile`：不匹配时报错而不是改写，避免"测过的版本"与"线上版本"悄悄分叉；
+    ★ 自检的地址**从 .env 读回**，不硬编码 —— 应用绑的是具体内网地址，回环上没有服务，
+      写 127.0.0.1 会得到"连不上"的假故障；
+    ★ 启动后轮询 /api/health 最多 20 秒，超时直接把 journalctl 命令打出来；
+    ★ 后台自检不只看到 200，还要求页面里有 /admin/assets/ ——
+      页面被别的东西顶替时同样是 200，而点进去会白屏；
+    ★ 前台发布复用 publish-site.sh 且**必须在服务起来之后**（SSG 构建期要从 API 拉数据）；
+    ★ 回滚路径写进了收尾提示：`git reset --hard <提交> && ./scripts/deploy.sh --no-pull --no-frontend`
 scripts/publish-site.sh[T·SC·8·SEC·S]: F:一键发布站点到 A 机（在 B 机上执行）|
   R:deploy/nginx.conf,docs/部署说明.md,apps/web/scripts/prerender.mjs | A:- |
   S:★ 存在的理由是**顺序不能反**：前台是 SSG，页面由构建期从 API 拉数据生成，

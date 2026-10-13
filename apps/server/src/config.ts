@@ -14,7 +14,8 @@
  * **测试要隔离必须传绝对路径**，否则会写进仓库的 `data/` 里。
  */
 
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -124,13 +125,31 @@ export function loadConfig(
   }
 
   /*
-   * 后台 SPA 目录：**空字符串表示不由本进程提供后台**，
-   * 所以不能直接 resolve —— 必须先把"未配置"与"配了相对路径"区分开。
-   * 默认 `apps/admin/dist` 正好是 `pnpm build` 的产物位置，
-   * 按源码树部署（/opt/oenpc-web）时无需额外配置。
+   * 后台 SPA 目录。三种取值：
+   *   · 未配置      -> 用**相对模块自身位置**推出的默认值（见下）
+   *   · 空串        -> 明确表示"本进程不提供后台界面"
+   *   · 相对/绝对路径 -> 按 cwd 解析
+   *
+   * ★ 默认值不能写成 `apps/admin/dist` 再按 cwd 解析。
+   *   systemd 的工作目录是 apps/server，于是会得到
+   *   /opt/oenpc-web/apps/server/apps/admin/dist —— 不存在，
+   *   而后台界面表现为 404，且日志里只有一句轻描淡写的"未提供后台"。
+   *
+   *   改成相对**本模块**位置：本文件在 apps/server/{src,dist}/ 下，
+   *   上两级再进 admin/dist 恰好是产物位置，且对三种布局都成立：
+   *     dev      apps/server/src  -> apps/admin/dist
+   *     源码树    apps/server/dist -> apps/admin/dist
+   *     发布包    server/dist      -> admin/dist
+   *   与进程的工作目录无关。
    */
-  const rawAdminDir = readString(env, 'ADMIN_DIR', 'apps/admin/dist')
-  const adminDir = rawAdminDir === '' ? '' : resolve(cwd, rawAdminDir)
+  const rawAdminDir = env[`${ENV_PREFIX}ADMIN_DIR`]
+  const defaultAdminDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'admin', 'dist')
+  const adminDir =
+    rawAdminDir === undefined
+      ? defaultAdminDir
+      : rawAdminDir === ''
+        ? ''
+        : resolve(cwd, rawAdminDir)
 
   return {
     host: readString(env, 'HOST', '127.0.0.1'),

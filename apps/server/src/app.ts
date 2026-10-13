@@ -184,10 +184,17 @@ export function buildApp(deps: AppDeps): BuiltApp {
       },
     })
     app.log.info({ adminDir }, '后台 SPA 已挂载在 /admin/')
+  } else if (adminDir === '') {
+    app.log.info('已按配置关闭后台界面（OENPC_WEB_ADMIN_DIR 为空）—— 只提供 API 与媒体')
   } else {
-    app.log.info(
+    /*
+     * 用 warn 而不是 info：这个分支意味着"配置了后台目录但里面没有 index.html"，
+     * 用户看到的现象是 /admin/ 404。日志里若只是一句轻描淡写的 info，
+     * 排查时很容易忽略 —— 而这恰恰是最容易发生的一种部署失误。
+     */
+    app.log.warn(
       { adminDir },
-      '未提供后台 SPA（OENPC_WEB_ADMIN_DIR 为空或产物不存在）—— 本进程只提供 API 与媒体',
+      '后台目录里没有 index.html，/admin/ 将返回 404。请先执行 pnpm --filter @oenpc-web/admin build，或检查 OENPC_WEB_ADMIN_DIR',
     )
   }
 

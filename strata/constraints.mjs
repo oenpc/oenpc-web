@@ -67,6 +67,25 @@ export const constraints = [
     check: 'checks/no-hardcoded-copy.mjs',
   },
   {
+    id: 'no-window-modal',
+    /*
+     * ★ scope 为什么必须含 `X`（这一点是实测出来的，不是推的）
+     *
+     * `apps/admin/` 是**目录条目**，坐标 `X·AU`。而 run-all 的 `resolveScope()`
+     * 会**跳过目录条目**（parse-index.mjs：「目录条目不交给逐个文件的检查」）。
+     * 实测两种写法：
+     *   · scope = ⟨V|O⟩        → 只命中 apps/web/src/App.vue，后台 .vue **一个都没进来**；
+     *   · scope = ⟨X|V|O⟩×⟨AU⟩ → 命中 **0** 个目标，run-all 直接记成"无法判定"。
+     * 所以这里写 ⟨X|V|O⟩ × 全部域，并让检查器**自己**把命中的目录条目展开成其下的 .vue
+     * （见 checks/no-window-modal.mjs 的说明）—— 只改 scope 而不展开，
+     * 后台的弹窗永远不会被扫到，约束会"通过得毫无内容"。
+     */
+    scope: { layers: ['X', 'V', 'O'] },
+    why: 'window.confirm/alert/prompt 会阻塞主线程、无法被自动化测试驱动、无法本地化、外观不受主题控制。',
+    symptom: '弹窗样式与主题不一致；自动化测试卡在原生弹窗上。',
+    check: 'checks/no-window-modal.mjs',
+  },
+  {
     id: 'index-integrity',
     repoWide: true,
     scope: {},

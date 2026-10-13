@@ -102,7 +102,7 @@ async function main() {
         '按 STRATA 的实验假设，写不出检查形态的约束大概率不会生效 —— 它在 §4 的「检查形态」列里是空的。',
       ].filter(Boolean)
     } else {
-      const targets = constraint.repoWide ? [] : resolveScope(entries, constraint.scope)
+      const targets = constraint.repoWide ? [] : resolveScope(entries, constraint.scope, ROOT)
 
       if (!constraint.repoWide && targets.length === 0) {
         outcome = 'unknown'

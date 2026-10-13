@@ -177,16 +177,60 @@ export function computeKappa(byFace, total) {
   }
 }
 
-/** 把 scope（层/域坐标）解析成索引里的目标文件。 */
-export function resolveScope(entries, scope = {}) {
+/** 同一轮判决里 resolveScope 会被每条约束调用一次，清点结果缓存复用。 */
+const sourceCache = new Map()
+
+function sourceFilesCached(root) {
+  let files = sourceCache.get(root)
+  if (files === undefined) {
+    files = collectSourceFiles(root)
+    sourceCache.set(root, files)
+  }
+  return files
+}
+
+/**
+ * 把 scope（层/域坐标）解析成索引里的目标文件。
+ *
+ * ★ **目录条目必须展开成其下的源码文件** —— 既不能丢弃，也不能把目录路径本身交出去。
+ *
+ * 原先这里是 `if (entry.path.endsWith('/')) continue`，后果非常隐蔽：
+ * AGENTS.md 明确建议"一组同类文件用目录条目覆盖，不必逐个写条目"，
+ * 而**照做就会让这批文件从所有按坐标筛选的约束里消失** ——
+ * 约束照常报 PASS，因为它一个文件都没检查。
+ * 这与"退出码 2 不等于通过"是同一类问题：**PASS 也可能是"什么都没查"**。
+ *
+ * 实证：`apps/admin/`（X·AU，6 个 .vue）与 `apps/web/src/pages/`（V·UI，4 个 .vue）
+ * 长期不在任何 scope 约束的覆盖范围内。`no-window-modal` 是靠检查器自己
+ * 读回 scope、再展开目录才绕过去的 —— 那是绕过判决层的临时手段，不该是常规做法。
+ *
+ * 展开成**文件路径**而不是把目录交出去，是为了让检查器仍然只面对文件：
+ * 交目录会让 `no-sql-in-routes` 之类的检查器收到目录路径而崩成"无法判定"。
+ *
+ * @param entries 索引条目（值需含 path / layer / domain）
+ * @param scope   约束的坐标范围
+ * @param root    仓库根；为 null 时无法展开目录条目（只有文件条目会命中）
+ */
+export function resolveScope(entries, scope = {}, root = null) {
   const layers = scope.layers ?? null
   const domains = scope.domains ?? null
-  const targets = []
+  const files = root === null ? null : sourceFilesCached(root)
+  const targets = new Set()
+
   for (const entry of entries.values()) {
     if (layers && !layers.includes(entry.layer)) continue
     if (domains && !domains.includes(entry.domain)) continue
-    if (entry.path.endsWith('/')) continue // 目录条目不交给逐个文件的检查
-    targets.push(entry.path)
+
+    if (!entry.path.endsWith('/')) {
+      targets.add(entry.path)
+      continue
+    }
+
+    if (files === null) continue
+    for (const file of files) {
+      if (file.startsWith(entry.path)) targets.add(file)
+    }
   }
-  return targets
+
+  return [...targets].sort()
 }

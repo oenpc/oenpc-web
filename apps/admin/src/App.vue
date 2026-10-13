@@ -15,14 +15,21 @@
  * 但组件**内置**文案（分页器、日期面板、确认框按钮）不跟着走就会中英混排 ——
  * 这一层不是"要不要国际化"的问题，而是"同一屏里不要出现两种语言"。
  *
+ * ★ 主题状态为什么落在本文件：`theme` 是 `n-config-provider` 的 prop，而 provider 在
+ * AppRoot 的**上游** —— AppRoot 自己没法把值传上来。所以由这里持有状态并 provide，
+ * AppRoot（下游）用 `useAdminTheme()` 消费。见 theme.ts 里关于"不用模块级可变变量"的说明。
+ *
  * 不引 vfonts：字体由 styles.css 的 font-family 统一指定，多一份字体包只是白增体积。
  */
 import { zhCN, dateZhCN } from 'naive-ui'
 import AppRoot from './AppRoot.vue'
+import { provideAdminTheme } from './theme'
+
+const { naiveTheme } = provideAdminTheme()
 </script>
 
 <template>
-  <n-config-provider :locale="zhCN" :date-locale="dateZhCN">
+  <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme="naiveTheme">
     <n-loading-bar-provider>
       <n-dialog-provider>
         <n-message-provider>

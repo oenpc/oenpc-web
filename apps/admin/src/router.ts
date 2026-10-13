@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { getToken } from './session'
 import LoginView from './views/LoginView.vue'
+import MediaLibraryView from './views/MediaLibraryView.vue'
 import ProductEditView from './views/ProductEditView.vue'
 import ProductListView from './views/ProductListView.vue'
 
@@ -10,6 +11,12 @@ export const routes: RouteRecordRaw[] = [
   { path: '/products', name: 'products', component: ProductListView },
   { path: '/products/new', name: 'product-new', component: ProductEditView },
   { path: '/products/:id', name: 'product-edit', component: ProductEditView },
+  /*
+   * 媒体库是**占位页**（本轮不实现列表功能）。
+   * 之所以现在就给路由而不是把菜单项禁用：见 MediaLibraryView.vue 的说明 ——
+   * 菜单 key / 路由 name / 组件这条链越早接通越好，否则它是唯一没被走过的那条路径。
+   */
+  { path: '/media', name: 'media', component: MediaLibraryView },
   /* 兜底：未匹配的路径回列表页，而不是留一个空白屏 */
   { path: '/:pathMatch(.*)*', redirect: '/products' },
 ]

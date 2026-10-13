@@ -1,12 +1,10 @@
 /*
- * 后台样式 —— 手写，不引入 UI 组件库。
+ * 后台样式 —— 表单与媒体选择器是手写的；**外壳（侧边栏/菜单/顶部栏）已改用 Naive UI 组件**，
+ * 所以这里不再有 .shell / .topbar 那套 flex 外壳规则（组件库自带"内容区滚动"的正确行为）。
  *
- * 理由：本轮目标是"能在服务器上跑起来、能录内容"。UI 库会带进
- * 一套主题系统与构建体积，而受益只是少写这几十行 CSS。
- * 需要更完整的组件（表格排序、日期选择、富文本）时再引入 Naive UI ——
- * 那时换的是视图层，不影响 API 与数据模型。
- *
- * 配色克制、字号偏大：运营者常在后台上连续工作，可读性优先于紧凑。
+ * 保留手写的原因是它们不划算组件化：表单控件与媒体网格的样式很短，
+ * 换成 n-form/n-grid 只会多一层抽象。代价是**暗色主题要靠 CSS 变量一起切** ——
+ * Naive UI 的 darkTheme 管不到这批手写规则，见下面的 `body.dark` 覆盖。
  */
 
 :root {
@@ -23,6 +21,23 @@
   font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
 }
 
+/*
+ * 暗色：只覆盖**颜色**变量，布局类规则一律复用。
+ * 由 theme.ts 在切换时给 document.body 加 `.dark` —— 这样"主题"只有一个开关点，
+ * 不需要在每个组件里写 `:class="{ dark: mode === 'dark' }"`。
+ */
+body.dark {
+  --bg: #101014;
+  --surface: #18181c;
+  --border: #2b2b31;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --primary: #4f83ff;
+  --danger: #ef5350;
+  --warn: #f0a33c;
+  --ok: #4ade80;
+}
+
 * { box-sizing: border-box; }
 
 body {
@@ -33,26 +48,41 @@ body {
   line-height: 1.6;
 }
 
-.shell { min-height: 100vh; display: flex; flex-direction: column; }
+/* 外壳：n-layout 需要父级有高度才撑得开（position="absolute" 依赖它） */
+.shell { height: 100vh; }
+
+.sider-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 18px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sider-brand-text { font-size: 15px; }
 
 .topbar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   padding: 0 20px;
   height: 56px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
 }
 
 .brand { font-weight: 600; }
-.nav { display: flex; gap: 14px; }
-.nav a { color: var(--text); text-decoration: none; }
-.nav a.router-link-active { color: var(--primary); font-weight: 600; }
 .spacer { flex: 1; }
 .who { color: var(--muted); font-size: 13px; }
 
-.content { padding: 24px; max-width: 1100px; width: 100%; margin: 0 auto; }
+.content { padding: 24px; }
+
+/*
+ * n-layout-content 内部已经有自己的滚动容器，这里限制内容宽度并居中即可。
+ * 用 max-width 而不是固定宽度：窄窗口下表格该横向滚动就滚动，不要挤成两行。
+ */
+.content > * { max-width: 1100px; margin-left: auto; margin-right: auto; }
 
 .card {
   background: var(--surface);
@@ -78,7 +108,7 @@ select {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font: inherit;
-  background: #fff;
+  background: var(--surface);
   color: var(--text);
 }
 
@@ -110,10 +140,19 @@ th { font-size: 13px; color: var(--muted); font-weight: 500; }
 .badge-on { background: #dcfce7; color: var(--ok); }
 .badge-off { background: #fee2e2; color: var(--danger); }
 
+/*
+ * 提示块的底色不能用变量硬套：这三块在暗色下需要**更暗**的底（不是 :root 里那个浅色），
+ * 所以只覆盖背景，文字色仍走变量。
+ */
 .alert { padding: 10px 12px; border-radius: var(--radius); margin-bottom: 14px; font-size: 14px; }
 .alert-error { background: #fee2e2; color: var(--danger); }
 .alert-warn { background: #fef3c7; color: var(--warn); }
 .alert-ok { background: #dcfce7; color: var(--ok); }
+body.dark .alert-error { background: #3a1d1d; }
+body.dark .alert-warn { background: #3a2f16; }
+body.dark .alert-ok { background: #16301f; }
+body.dark .badge-on { background: #16301f; }
+body.dark .badge-off { background: #3a1d1d; }
 
 .muted { color: var(--muted); font-size: 13px; }
 .locale-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
@@ -128,7 +167,7 @@ th { font-size: 13px; color: var(--muted); font-weight: 500; }
 .locale-tabs button.active { border-color: var(--primary); color: var(--primary); font-weight: 600; }
 
 .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
-.media-item { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: #fff; }
+.media-item { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
 .media-item img { width: 100%; height: 90px; object-fit: cover; display: block; }
 .media-item.selected { outline: 2px solid var(--primary); }
 .media-name { font-size: 12px; padding: 4px 6px; color: var(--muted); word-break: break-all; }

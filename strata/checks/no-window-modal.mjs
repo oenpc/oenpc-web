@@ -10,21 +10,21 @@
  * **无法本地化**（按钮文案由浏览器语言决定，站点 locale 管不到）、
  * **外观不受主题控制**（换主题、换暗色时它是唯一不跟着变的东西）。
  *
- * ## ★ 为什么本检查要自己去取 scope，而不是只用 `targets`
+ * ## ★ 目标从哪来：只用 `targets`，检查器不再自己读索引
  *
- * `run-all.mjs` 用 `resolveScope()` 把 scope 解析成**文件条目**，而它会**跳过目录条目**
- * （`parse-index.mjs`：「目录条目不交给逐个文件的检查」）。本项目的后台是
- * `apps/admin/[X·AU·…]` 这样的**目录条目**，于是：
+ * `run-all.mjs` 用 `resolveScope(entries, scope, root)` 把 scope 解析成**源码文件路径**，
+ * 其中**目录条目已经展开**成其下的文件 —— 所以 `apps/admin/`（目录条目 `X·AU`）
+ * 下的 .vue 会作为普通文件路径出现在 `targets` 里。
  *
- *   · scope 写 ⟨V|O⟩        → 只命中 apps/web/src/App.vue，后台一个 .vue 都进不来；
- *   · scope 写 ⟨X|V|O⟩×⟨AU⟩ → 命中 **0** 个目标，run-all 直接记为"无法判定"。
+ * 这里曾经有一份**自己的**展开逻辑（读回索引 → 按 scope 挑目录条目 → 递归收集 .vue），
+ * 那是 `resolveScope` 还会丢弃目录条目时的绕行手段。它一旦留下就是**第二个真相来源**：
+ * 判决层改了展开规则（例如新增 SOURCE_EXTS、改 SKIP_DIRS），检查器仍旧按旧规则扫，
+ * 两边给出的"检查范围"会静默分叉 —— 而范围分叉的后果正是"PASS 但什么都没查"。
+ * 所以现在只信 `targets`；范围不对要修的是 `resolveScope`，不是这里。
  *
- * 也就是说：**"scope 锚对了面"与"文件真的被扫到"是两件事**，中间的目录条目会被丢掉。
- * 若不补这一步，本约束会在后台"通过得毫无内容"——比没有约束更糟，因为它看起来检查过了。
- * 所以这里做两件事，缺一不可：
- *   ① scope 里必须含 `X`（`apps/admin/` 的坐标），否则连"适用"都算不上；
- *   ② 本检查按**自己那条 scope**（从 constraints.mjs 读，避免把 scope 抄第二遍而漂移）
- *      把命中的目录条目展开成其下的 .vue 文件。
+ * 代价（**必须知道**）：本检查单独执行（`node strata/checks/no-window-modal.mjs`）
+ * 拿不到 run-all 解析出的范围，只会得到"没有目标"的 2。要复现真实判定请走
+ * `pnpm strata:check` 或把文件路径当参数传进来。
  *
  * ## 诚实声明（已知漏检）
  *
@@ -37,12 +37,9 @@
  * 判不了的时候（读不到文件）返回 2 而不是 0。
  */
 
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { SKIP_DIRS } from '../lib/dictionary.mjs'
-import { parseIndex } from '../lib/parse-index.mjs'
-import { constraints } from '../constraints.mjs'
 
 export const meta = {
   id: 'no-window-modal',
@@ -56,105 +53,32 @@ export const meta = {
  */
 const FORBIDDEN = /window\s*\.\s*(confirm|alert|prompt)\s*\(/g
 
-/** 列出一个目录条目下的全部 .vue（与索引完整性用同一份 SKIP_DIRS，避免扫到 dist/）。 */
-function collectVueFiles(root, dirPath) {
-  const found = []
-  const walk = (abs, rel) => {
-    let items
-    try {
-      items = readdirSync(abs, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const item of items) {
-      if (item.name.startsWith('.')) continue
-      if (SKIP_DIRS.has(item.name)) continue
-      const childRel = rel === '' ? item.name : `${rel}/${item.name}`
-      if (item.isDirectory()) {
-        walk(join(abs, item.name), childRel)
-        continue
-      }
-      if (item.name.endsWith('.vue')) found.push(childRel)
-    }
-  }
-  walk(join(root, dirPath), dirPath.replace(/\/+$/, ''))
-  return found.sort()
-}
+export async function run({ root, targets }) {
+  const all = (targets ?? []).filter((path) => path.endsWith('.vue')).sort()
 
-/** 条目是否落在约束 scope 的坐标内。 */
-function inScope(entry, scope) {
-  const layers = scope.layers ?? null
-  const domains = scope.domains ?? null
-  if (layers && !layers.includes(entry.layer)) return false
-  if (domains && !domains.includes(entry.domain)) return false
-  return true
-}
-
-export async function run({ root, targets, ctx }) {
-  const declared = constraints.find((c) => c.id === meta.id)
-  if (!declared) {
-    return {
-      status: 2,
-      summary: '在 constraints.mjs 里找不到本约束的 scope，无法判定',
-      details: [
-        `${meta.id} 未在 strata/constraints.mjs 里注册（或 id 写错）。`,
-        '本检查要按自己声明的 scope 展开目录条目，读不到 scope 就不能猜 —— 猜出来的范围不可信。',
-      ],
-    }
-  }
-
-  const scope = declared.scope ?? {}
-  const entries = ctx?.entries ?? parseIndex(root).entries
-
-  /* ① scope 命中的文件条目里，属于本约束的那部分 */
-  const directFiles = new Set((targets ?? []).filter((path) => path.endsWith('.vue')))
-
-  /* ② scope 命中的目录条目展开成文件 —— 这一步是 apps/admin/ 能进来的唯一途径 */
-  const expandedFiles = new Set()
-  const expanded = []
-  for (const entry of entries.values()) {
-    if (!entry.path.endsWith('/')) continue
-    if (!inScope(entry, scope)) continue
-    const found = collectVueFiles(root, entry.path)
-    if (found.length === 0) continue
-    for (const file of found) expandedFiles.add(file)
-    expanded.push({ dir: entry.path, face: `${entry.layer}·${entry.domain}`, count: found.length })
-  }
-
-  const files = [...new Set([...directFiles, ...expandedFiles])].sort()
-  const directOnly = [...directFiles].filter((file) => !expandedFiles.has(file))
-
-  if (files.length === 0) {
-    if ((targets ?? []).length === 0) {
-      return {
-        status: 2,
-        summary: '没有适用文件 —— scope 没解析出任何目标',
-        details: [
-          `约束 scope 是 ⟨${(scope.layers ?? ['全部层']).join('|')}⟩ × ⟨${(scope.domains ?? ['全部域']).join('|')}⟩，`,
-          '索引里没有任何条目落在它的坐标上，且展开不出 .vue —— 约束目前无处生效。',
-          '这不是通过。检查 apps/admin/（目录条目，坐标 X·AU）是否被 scope 的 layers 覆盖。',
-        ],
-      }
-    }
+  if (all.length === 0) {
     return {
       status: 2,
       summary: '适用目标里没有 .vue 文件，无法判定',
       details: [
-        `适用面命中 ${targets.length} 个文件条目，但没有 .vue 文件，目录条目也没展开出 .vue。`,
+        `适用面命中 ${(targets ?? []).length} 个路径，但没有一个是 .vue。`,
         '后台/前台的页面尚未落地，或页面不是 .vue —— 两种情况都要先确认，不能当作通过。',
+        '若这里恒为 0 而仓库里明明有 .vue，那是判决层的范围解析坏了',
+        '（目录条目没展开）：修 strata/lib/parse-index.mjs 的 resolveScope，',
+        '而不是在本检查里再补一份展开逻辑 —— 两份真相会静默分叉。',
       ],
     }
   }
 
   const violations = []
-  let unreadable = 0
+  const unreadable = []
 
-  for (const relative of files) {
+  for (const relative of all) {
     let source
     try {
       source = readFileSync(join(root, relative), 'utf8')
     } catch {
-      unreadable += 1
+      unreadable.push(relative)
       continue
     }
 
@@ -171,11 +95,8 @@ export async function run({ root, targets, ctx }) {
   }
 
   const scopeNote = [
-    `适用面 ⟨${(scope.layers ?? ['全部层']).join('|')}⟩ × ⟨${(scope.domains ?? ['全部域']).join('|')}⟩；`,
-    `文件条目 ${directOnly.length} 个${directOnly.length > 0 ? `（${directOnly.join('、')}）` : ''}；`,
-    expanded.length > 0
-      ? `目录条目展开 ${expanded.map((e) => `${e.dir}（${e.face}）× ${e.count}`).join('、')}。`
-      : '没有目录条目命中（若后台是目录条目，说明 scope 的 layers 少了它的层码）。',
+    `本检查只看 run-all 的 resolveScope 交过来的 ${all.length} 个 .vue`,
+    '（目录条目在判决层已展开成文件）—— 检查器不再自己读索引，避免两份范围分叉。',
   ]
 
   if (violations.length > 0) {
@@ -192,20 +113,21 @@ export async function run({ root, targets, ctx }) {
     return { status: 1, summary: `原生模态 ${violations.length} 处`, details }
   }
 
-  if (unreadable > 0) {
+  if (unreadable.length > 0) {
     return {
       status: 2,
-      summary: `${unreadable} 个文件读不了，判定不完整`,
-      details: [`有 ${unreadable} 个 .vue 无法读取，未检出的部分不能算通过。`, ...scopeNote],
+      summary: `${unreadable.length} 个文件读不了，判定不完整`,
+      details: [
+        `有 ${unreadable.length} 个 .vue 无法读取，未检出的部分不能算通过：`,
+        ...unreadable.map((path) => `  - ${path}`),
+        ...scopeNote,
+      ],
     }
   }
 
-  const dirPart = expanded.map((e) => `${e.dir}（${e.face}）× ${e.count}`).join('、')
   return {
     status: 0,
-    summary:
-      `通过（检查 ${files.length} 个 .vue：` +
-      `${dirPart ? `目录条目 ${dirPart}；` : ''}文件条目 ${directOnly.length} 个）`,
+    summary: `通过（检查 ${all.length} 个 .vue：${all.join('、')}）`,
     details: [
       ...scopeNote,
       '（文本正则，有漏检：globalThis/self 上的同名方法、解构后再调、动态拼名字都看不见；',

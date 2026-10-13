@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMessage, type FormInst, type FormRules } from 'naive-ui'
 import type { LoginResult } from '@oenpc-web/shared'
 import { ApiError, api } from '../api'
+import { setAdminIdentity } from '../admin-preferences'
 import { setToken } from '../session'
 
 const router = useRouter()
@@ -84,6 +85,13 @@ async function submit(): Promise<void> {
       password: formValue.password,
     })
     setToken(result.token)
+    /*
+     * 记下"当前是谁"给顶部栏用。只存展示字符串、**不存整个 user 对象**：
+     * 权限判断要在服务端做（前端守卫不构成安全边界），存一份本地权限副本
+     * 只会让人误以为前端也在鉴权。展示名取 displayName，回落到 username，
+     * 因为 displayName 允许为空。
+     */
+    setAdminIdentity(result.user.displayName || result.user.username)
     message.success('登录成功')
 
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/products'

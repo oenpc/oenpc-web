@@ -301,6 +301,42 @@ else
   echo "  ⚠ 首页返回异常" >&2
 fi
 
+# 后台：不仅要 200，还要确认拿到的是**后台自己的页面**（而不是前台的 index.html）
+TMP_ADMIN=$(mktemp)
+ADMIN_CODE=$(curl -sSL --max-time 10 -o "$TMP_ADMIN" -w '%{http_code}' "${SITE_URL}/admin/" || echo '000')
+if [ "$ADMIN_CODE" = "200" ] && grep -q '/admin/assets/' "$TMP_ADMIN"; then
+  echo "  后台页面 ✓"
+else
+  echo "" >&2
+  echo "⚠ ${SITE_URL}/admin/ 异常（HTTP ${ADMIN_CODE}）" >&2
+  echo "   两个最常见的原因：" >&2
+  echo "     1. 那个 server 块里**没有** location ^~ /admin/ 段 ——" >&2
+  echo "        请求落到前台的 root 下找 site/admin/，那里没有东西 → 404" >&2
+  echo "     2. 用了 root 而不是 alias（或 alias 结尾少了斜杠）→ 路径拼错" >&2
+  echo "" >&2
+  echo "   正确写法（**两个结尾斜杠都不能少**）：" >&2
+  echo "     location ^~ /admin/ {" >&2
+  echo "         alias /var/www/oenpc-web/admin/;" >&2
+  echo "         try_files \$uri \$uri/ /admin/index.html;" >&2
+  echo "     }" >&2
+  echo "" >&2
+  echo "   原因：location 里用 root 时 nginx 会把**整条 URI** 拼上去 ——" >&2
+  echo "         /admin/app.js → /var/www/oenpc-web/admin/admin/app.js（多了一层 admin/）" >&2
+  echo "         而 alias 是「把 location 前缀替换掉」的语义。" >&2
+fi
+rm -f "$TMP_ADMIN"
+
+# 媒体反代：用一个**不存在的 id** 探测。
+# 代理通了 → 应用返回 JSON 404；没代理通 → 返回静态站 HTML 或静态 404。
+TMP_MEDIA=$(mktemp)
+curl -sSL --max-time 10 -o "$TMP_MEDIA" "${SITE_URL}/media/00000000-0000-0000-0000-000000000000" >/dev/null 2>&1 || true
+if grep -q 'NOT_FOUND' "$TMP_MEDIA" 2>/dev/null; then
+  echo "  /media/ 反代 ✓"
+else
+  echo "  ⚠ /media/ 没有反代到应用 —— 前台图片会 404（见 nginx 的 /media/ 段）" >&2
+fi
+rm -f "$TMP_MEDIA"
+
 say "完成"
 echo "  前台 ${SITE_URL}/          后台 ${SITE_URL}/admin/"
 echo ""

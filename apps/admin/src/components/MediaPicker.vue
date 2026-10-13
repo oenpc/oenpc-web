@@ -7,8 +7,12 @@
  * 分成两个组件会让"删除了仍被引用的图片"这类策略在两处各写一遍。
  */
 import { onMounted, ref } from 'vue'
+import { useDialog } from 'naive-ui'
 import type { MediaAsset, Page } from '@oenpc-web/shared'
 import { ApiError, api } from '../api'
+
+/* 本组件挂在路由页面之下，同样在 App.vue 的 provider 子树里 */
+const dialog = useDialog()
 
 const props = defineProps<{ multiple?: boolean }>()
 const emit = defineEmits<{
@@ -87,9 +91,21 @@ function choose(asset: MediaAsset): void {
   emit('picked', asset)
 }
 
-async function remove(asset: MediaAsset): Promise<void> {
-  if (!window.confirm(`删除「${asset.filename}」？若仍有产品引用它，删除会被拒绝。`)) return
+/*
+ * 二次确认走 useDialog（原生弹窗会阻塞主线程、测试驱动不了、样式与主题不一致）。
+ * 标签里的删除按钮带 @click.stop，否则点它会顺带触发外层缩略图的"选中这张图"。
+ */
+function remove(asset: MediaAsset): void {
+  dialog.warning({
+    title: '删除媒体',
+    content: `删除「${asset.filename}」？若仍有产品引用它，删除会被拒绝。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: () => performRemove(asset),
+  })
+}
 
+async function performRemove(asset: MediaAsset): Promise<void> {
   error.value = ''
   notice.value = ''
   try {

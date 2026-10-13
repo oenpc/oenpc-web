@@ -7,9 +7,13 @@ import {
   type Page,
   type Product,
 } from '@oenpc-web/shared'
+import { useDialog } from 'naive-ui'
 import { ApiError, api } from '../api'
 import { productToInput } from '../product-form'
 import MediaPicker from '../components/MediaPicker.vue'
+
+/* 本组件在 App.vue 的 provider 子树里（它是路由页面），所以这里能取到实例 */
+const dialog = useDialog()
 
 const list = ref<AdminProductSummary[]>([])
 const total = ref(0)
@@ -77,14 +81,27 @@ async function togglePublished(item: AdminProductSummary): Promise<void> {
   }
 }
 
-async function remove(item: AdminProductSummary): Promise<void> {
-  /*
-   * 删除不可逆（产品与翻译、图集、渠道一并级联删除）。
-   * 用原生 confirm 而不是自绘弹窗：本轮不值得为它引入组件库，
-   * 而**没有**二次确认才是真正的风险。
-   */
-  if (!window.confirm(`确定删除「${titleOf(item)}」？该操作不可撤销。`)) return
+/*
+ * 删除不可逆（产品与翻译、图集、渠道一并级联删除）。
+ *
+ * 用 useDialog 而不是原生弹窗：原生弹窗阻塞主线程、自动化测试驱动不了它、
+ * 文案不跟主题走也无法本地化 —— 这条已固化为约束 no-window-modal。
+ *
+ * 请求放在 `onPositiveClick` 里而不是"确认后另起一段"：
+ * 返回 Promise 时对话框会一直保持 loading 到它落定，
+ * 用户因此没有机会在请求进行中重复点"删除"。
+ */
+function remove(item: AdminProductSummary): void {
+  dialog.warning({
+    title: '删除产品',
+    content: `确定删除「${titleOf(item)}」？该操作不可撤销。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: () => performRemove(item),
+  })
+}
 
+async function performRemove(item: AdminProductSummary): Promise<void> {
   error.value = ''
   notice.value = ''
   try {

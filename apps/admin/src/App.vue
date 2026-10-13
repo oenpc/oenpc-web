@@ -1,41 +1,36 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { api } from './api'
-import { setToken } from './session'
-
-const route = useRoute()
-const router = useRouter()
-
-/* 登录页不显示导航 —— 那里还没有会话，导航栏只会让人误以为已经登录了 */
-const showNav = computed(() => route.meta.public !== true)
-const currentUser = computed(() => (route.meta.public === true ? '' : ''))
-
-async function logout(): Promise<void> {
-  try {
-    await api.post('/api/auth/logout', {})
-  } catch {
-    /* 服务端可能已经没这个会话了（过期/重启）—— 本地清掉就是"登出成功" */
-  }
-  setToken(null)
-  await router.push({ name: 'login' })
-}
+/*
+ * 应用根 —— **只装配 provider，不消费它们**。
+ *
+ * ★ 为什么要拆出 AppRoot.vue
+ *
+ * Naive UI 的 useMessage / useDialog / useNotification / useLoadingBar 都是
+ * provide/inject：向上找**最近的** provider。而 provide 只对子树可见 ——
+ * 一个组件里既 provide 又 inject，拿到的是 undefined（不是报错，也不是回落到默认实现），
+ * 真正抛错要等到调用时（"No outer <n-message-provider /> founded"）。
+ * 所以"提供者"与"使用者"必须分属两个组件：本文件提供，AppRoot.vue 及路由页面使用。
+ * 这也正是 `useDialog` 能在 LoginView / ProductListView / MediaPicker 里直接用到的原因。
+ *
+ * locale 挂 `zhCN` + `dateZhCN`：后台是内部单语工具（见索引 apps/admin/ 条目的文案策略），
+ * 但组件**内置**文案（分页器、日期面板、确认框按钮）不跟着走就会中英混排 ——
+ * 这一层不是"要不要国际化"的问题，而是"同一屏里不要出现两种语言"。
+ *
+ * 不引 vfonts：字体由 styles.css 的 font-family 统一指定，多一份字体包只是白增体积。
+ */
+import { zhCN, dateZhCN } from 'naive-ui'
+import AppRoot from './AppRoot.vue'
 </script>
 
 <template>
-  <div class="shell">
-    <header v-if="showNav" class="topbar">
-      <span class="brand">OENPC-WEB 后台</span>
-      <nav class="nav">
-        <RouterLink :to="{ name: 'products' }">产品</RouterLink>
-      </nav>
-      <span class="spacer" />
-      <span v-if="currentUser" class="who">{{ currentUser }}</span>
-      <button type="button" class="btn btn-ghost" @click="logout">退出</button>
-    </header>
-
-    <main class="content">
-      <RouterView />
-    </main>
-  </div>
+  <n-config-provider :locale="zhCN" :date-locale="dateZhCN">
+    <n-loading-bar-provider>
+      <n-dialog-provider>
+        <n-message-provider>
+          <n-notification-provider>
+            <AppRoot />
+          </n-notification-provider>
+        </n-message-provider>
+      </n-dialog-provider>
+    </n-loading-bar-provider>
+  </n-config-provider>
 </template>

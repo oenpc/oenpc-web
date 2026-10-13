@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import Components from 'unplugin-vue-components/vite'
+import { NaiveUiResolver } from 'unplugin-vue-components/resolvers'
 
 /*
  * ★ `base: '/admin/'` **必须与 nginx 的 location 一致**。
@@ -13,7 +15,18 @@ import vue from '@vitejs/plugin-vue'
  */
 export default defineConfig({
   base: '/admin/',
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    /*
+     * Naive UI 按需引入：模板里写 `<n-button>` 就自动带上 import 与样式，
+     * 不必在每个 .vue 顶部手写一长串 import，也不会把整套组件打进产物。
+     *
+     * `dts: false` —— 自动生成的 `components.d.ts` 是**构建产物**，
+     * 提交它会让每次改模板都产生一次与逻辑无关的 diff；不提交它则 CI 上必然过期。
+     * 代价：vue-tsc 不知道这些全局组件（见 tsconfig / typecheck 的说明）。
+     */
+    Components({ resolvers: [NaiveUiResolver()], dts: false }),
+  ],
   build: {
     outDir: 'dist',
     emptyOutDir: true,

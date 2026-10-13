@@ -25,6 +25,17 @@ export interface ServerConfig {
   dbPath: string
   /** 绝对路径。 */
   mediaDir: string
+  /**
+   * 后台 SPA 产物目录（绝对路径）。**为空表示不由本进程提供后台。**
+   *
+   * 部署形态是「A 机只跑前台站点，B 机跑 admin + server」，
+   * 所以后台 SPA 由**应用进程**直接发出（见 app.ts 的静态注册）——
+   * 不可能让 A 机的 nginx 去 alias 一个位于 B 机上的目录。
+   *
+   * 默认指向仓库里的 `apps/admin/dist`，正好是 `pnpm build` 的产物位置，
+   * 所以按源码树部署（`/opt/oenpc-web`）时不需要额外配置。
+   */
+  adminDir: string
   logLevel: LogLevel
   /** 站点默认时区，**只影响后台展示**；存储一律 UTC。 */
   defaultTimezone: string
@@ -112,11 +123,21 @@ export function loadConfig(
     )
   }
 
+  /*
+   * 后台 SPA 目录：**空字符串表示不由本进程提供后台**，
+   * 所以不能直接 resolve —— 必须先把"未配置"与"配了相对路径"区分开。
+   * 默认 `apps/admin/dist` 正好是 `pnpm build` 的产物位置，
+   * 按源码树部署（/opt/oenpc-web）时无需额外配置。
+   */
+  const rawAdminDir = readString(env, 'ADMIN_DIR', 'apps/admin/dist')
+  const adminDir = rawAdminDir === '' ? '' : resolve(cwd, rawAdminDir)
+
   return {
     host: readString(env, 'HOST', '127.0.0.1'),
     port: readPort(env, 'PORT', 3900),
     dbPath: resolve(cwd, readString(env, 'DB_PATH', 'data/oenpc-web.db')),
     mediaDir: resolve(cwd, readString(env, 'MEDIA_DIR', 'data/media')),
+    adminDir,
     logLevel: readLogLevel(env),
     defaultTimezone: readString(env, 'DEFAULT_TIMEZONE', 'Asia/Shanghai'),
     siteUrl,

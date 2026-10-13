@@ -29,6 +29,9 @@
  */
 
 import Fastify, { type FastifyInstance } from 'fastify'
+import fastifyStatic from '@fastify/static'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type { ApiErr } from '@oenpc-web/shared'
 import type { ServerConfig } from './config.js'
 import { toAppError } from './core/errors.js'
@@ -141,10 +144,65 @@ export function buildApp(deps: AppDeps): BuiltApp {
   })
 
   /*
+   * ── 后台 SPA：由**本进程**提供 ──
+   *
+   * 部署形态是「A 机只跑前台站点，B 机跑 admin + server」，
+   * 后台产物在 B 机上，所以只能由应用进程发出 ——
+   * 不可能让 A 机的 nginx 去 alias 一个位于 B 机上的目录。
+   *
+   * 未配置或目录不存在时**只记日志、不抛错**：API 并不依赖后台 SPA，
+   * 因为缺了管理界面就让整个服务起不来是不合理的。
+   */
+  const adminDir = deps.config.adminDir
+  const serveAdmin = adminDir !== '' && existsSync(join(adminDir, 'index.html'))
+
+  if (serveAdmin) {
+    /*
+     * 这里**故意不 await**：buildApp 是同步函数，而 register 只是把插件排队，
+     * Fastify 会在 listen()/ready() 时执行。request 期用到 sendFile 时早已就绪。
+     */
+    app.register(fastifyStatic, {
+      root: adminDir,
+      prefix: '/admin/',
+      index: ['index.html'],
+      /*
+       * ★ 必须关掉内置的 cacheControl，否则它会在 setHeaders 之后
+       * 再写一次 `Cache-Control: public, max-age=0`，把下面设的值盖掉。
+       * （这是实测发现的：资源文件拿到的仍是 max-age=0 而不是 immutable。）
+       */
+      cacheControl: false,
+      setHeaders(response, path) {
+        /*
+         * 后台资源文件名带内容哈希，可以长缓存；
+         * 但 index.html **绝不能**缓存 —— 否则升级后浏览器拿旧 HTML
+         * 去引用已被删除的旧资源，表现为白屏。
+         */
+        response.setHeader(
+          'Cache-Control',
+          path.endsWith('index.html') ? 'no-cache' : 'public, max-age=31536000, immutable',
+        )
+      },
+    })
+    app.log.info({ adminDir }, '后台 SPA 已挂载在 /admin/')
+  } else {
+    app.log.info(
+      { adminDir },
+      '未提供后台 SPA（OENPC_WEB_ADMIN_DIR 为空或产物不存在）—— 本进程只提供 API 与媒体',
+    )
+  }
+
+  /*
    * 未匹配的路由也走信封 —— 否则前端拿到的是 Fastify 的默认 HTML/JSON，
    * 与契约不符，客户端解析会炸在类型断言上。
+   *
+   * 例外：后台 SPA 的 **history 路由回落**。`/admin/products/<id>` 这类路径
+   * 磁盘上没有对应文件，但它是前端路由，必须返回后台的 index.html 交给前端接管；
+   * 若这里回 404 JSON，用户在后台里刷新任意子页面就会看到一坨 JSON。
    */
-  app.setNotFoundHandler((_request, reply) => {
+  app.setNotFoundHandler((request, reply) => {
+    if (serveAdmin && request.method === 'GET' && request.url.startsWith('/admin/')) {
+      return reply.sendFile('index.html')
+    }
     const body: ApiErr = { ok: false, code: 'NOT_FOUND' }
     reply.status(404).send(body)
   })

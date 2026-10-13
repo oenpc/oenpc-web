@@ -148,7 +148,9 @@ fi
 
 # 注意结尾的斜杠：传的是目录**内容**，否则会多出一层 site/client/
 rsync "${RSYNC_FLAGS[@]}" apps/web/dist/client/ "${REMOTE}:${SITE_DIR}/"
-rsync "${RSYNC_FLAGS[@]}" apps/admin/dist/       "${REMOTE}:${ADMIN_DIR}/"
+# 后台 SPA **不推到 A 机** —— 按本项目的部署形态，admin 由 B 机的应用进程发出
+# （见 apps/server/src/app.ts 的静态注册），A 机只跑前台站点。
+# 后台产物就在 B 机上，构建完即可用，无需传输。
 
 if [ "$DRY_RUN" -eq 1 ]; then
   say "dry-run 结束"
@@ -303,15 +305,15 @@ fi
 
 # 后台：不仅要 200，还要确认拿到的是**后台自己的页面**（而不是前台的 index.html）
 TMP_ADMIN=$(mktemp)
-ADMIN_CODE=$(curl -sSL --max-time 10 -o "$TMP_ADMIN" -w '%{http_code}' "${SITE_URL}/admin/" || echo '000')
+ADMIN_CODE=$(curl -sSL --max-time 10 -o "$TMP_ADMIN" -w '%{http_code}' "${API_BASE}/admin/" || echo '000')
 if [ "$ADMIN_CODE" = "200" ] && grep -q '/admin/assets/' "$TMP_ADMIN"; then
   echo "  后台页面 ✓"
 else
   echo "" >&2
-  echo "⚠ ${SITE_URL}/admin/ 异常（HTTP ${ADMIN_CODE}）" >&2
+  echo "⚠ ${API_BASE}/admin/ 异常（HTTP ${ADMIN_CODE}）" >&2
   echo "   两个最常见的原因：" >&2
-  echo "     1. 那个 server 块里**没有** location ^~ /admin/ 段 ——" >&2
-  echo "        请求落到前台的 root 下找 site/admin/，那里没有东西 → 404" >&2
+  echo "     1. 服务端没找到后台产物 —— 检查 OENPC_WEB_ADMIN_DIR" >&2
+  echo "        （默认 apps/admin/dist，相对 WorkingDirectory 解析）" >&2
   echo "     2. 用了 root 而不是 alias（或 alias 结尾少了斜杠）→ 路径拼错" >&2
   echo "" >&2
   echo "   正确写法（**两个结尾斜杠都不能少**）：" >&2
